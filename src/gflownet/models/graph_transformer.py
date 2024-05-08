@@ -1,13 +1,15 @@
 from itertools import chain
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 import torch_geometric.data as gd
 import torch_geometric.nn as gnn
+from torch import Tensor
 from torch_geometric.utils import add_self_loops
 
 from gflownet.config import Config
-from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphActionType, action_type_to_mask
 
 
 def mlp(n_in, n_hid, n_out, n_layer, act=nn.LeakyReLU):
@@ -31,7 +33,9 @@ class GraphTransformer(nn.Module):
     node embeddings, and of the final virtual node embeddings.
     """
 
-    def __init__(self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre"):
+    def __init__(
+        self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre", concat=True
+    ):
         """
         Parameters
         ----------
@@ -47,9 +51,16 @@ class GraphTransformer(nn.Module):
             The number of Transformer layers.
         num_heads: int
             The number of Transformer heads per layer.
+        num_noise: int
+            The number of noise features to add to the node features.
+            This can be used as a simple positional encoding mechanism.
         ln_type: str
             The location of Layer Norm in the transformer, either 'pre' or 'post', default 'pre'.
             (apparently, before is better than after, see https://arxiv.org/pdf/2002.04745.pdf)
+        concat: bool
+            Whether each head uses num_emb units (True) or num_emb // num_heads (False) units. Defaults to True.
+            If True this implies num_emb * num_heads output units within the attention mechanism (which are later
+            reprojected to num_emb units).
         """
         super().__init__()
         self.num_layers = num_layers
@@ -59,14 +70,15 @@ class GraphTransformer(nn.Module):
 
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
         self.e2h = mlp(e_dim, num_emb, num_emb, 2)
-        self.c2h = mlp(g_dim, num_emb, num_emb, 2)
+        self.c2h = mlp(max(1, g_dim), num_emb, num_emb, 2)
+        n_att = num_emb * num_heads if concat else num_emb
         self.graph2emb = nn.ModuleList(
             sum(
                 [
                     [
                         gnn.GENConv(num_emb, num_emb, num_layers=1, aggr="add", norm=None),
-                        gnn.TransformerConv(num_emb * 2, num_emb, edge_dim=num_emb, heads=num_heads),
-                        nn.Linear(num_heads * num_emb, num_emb),
+                        gnn.TransformerConv(num_emb * 2, n_att // num_heads, edge_dim=num_emb, heads=num_heads),
+                        nn.Linear(n_att, num_emb),
                         gnn.LayerNorm(num_emb, affine=False),
                         mlp(num_emb, num_emb * 4, num_emb, 1),
                         gnn.LayerNorm(num_emb, affine=False),
@@ -78,7 +90,7 @@ class GraphTransformer(nn.Module):
             )
         )
 
-    def forward(self, g: gd.Batch, cond: torch.Tensor):
+    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
         """Forward pass
 
         Parameters
@@ -100,7 +112,7 @@ class GraphTransformer(nn.Module):
             x = g.x
         o = self.x2h(x)
         e = self.e2h(g.edge_attr)
-        c = self.c2h(cond)
+        c = self.c2h(cond if cond is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
         num_total_nodes = g.x.shape[0]
         # Augment the edges with a new edge to the conditioning
         # information node. This new node is connected to every node
@@ -165,6 +177,10 @@ class GraphTransformerGFN(nn.Module):
         "edge": "edge_index",
     }
 
+    action_type_to_key = lambda action_type: GraphTransformerGFN._graph_part_to_key.get(  # noqa: E731
+        GraphTransformerGFN._action_type_to_graph_part.get(action_type)
+    )
+
     def __init__(
         self,
         env_ctx,
@@ -182,7 +198,9 @@ class GraphTransformerGFN(nn.Module):
             num_layers=cfg.model.num_layers,
             num_heads=cfg.model.graph_transformer.num_heads,
             ln_type=cfg.model.graph_transformer.ln_type,
+            concat=cfg.model.graph_transformer.concat_heads,
         )
+        self.env_ctx = env_ctx
         num_emb = cfg.model.num_emb
         num_final = num_emb
         num_glob_final = num_emb * 2
@@ -221,30 +239,23 @@ class GraphTransformerGFN(nn.Module):
 
         self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, cfg.model.graph_transformer.num_mlp_layers)
         # TODO: flag for this
-        self.logZ = mlp(env_ctx.num_cond_dim, num_emb * 2, 1, 2)
+        self._logZ = mlp(max(1, env_ctx.num_cond_dim), num_emb * 2, 1, 2)
 
-    def _action_type_to_mask(self, t, g):
-        return getattr(g, t.mask_name) if hasattr(g, t.mask_name) else torch.ones((1, 1), device=g.x.device)
+    def logZ(self, cond_info: Optional[torch.Tensor]):
+        if cond_info is None:
+            return self._logZ(torch.ones((1, 1), device=self._logZ[0].weight.device))
+        return self._logZ(cond_info)
 
-    def _action_type_to_logit(self, t, emb, g):
-        logits = self.mlps[t.cname](emb[self._action_type_to_graph_part[t]])
-        return self._mask(logits, self._action_type_to_mask(t, g))
-
-    def _mask(self, x, m):
-        # mask logit vector x with binary mask m, -1000 is a tiny log-value
-        # Note to self: we can't use torch.inf here, because inf * 0 is nan (but also see issue #99)
-        return x * m + -1000 * (1 - m)
-
-    def _make_cat(self, g, emb, action_types):
+    def _make_cat(self, g: gd.Batch, emb: Dict[str, Tensor], action_types: list[GraphActionType]):
         return GraphActionCategorical(
             g,
-            logits=[self._action_type_to_logit(t, emb, g) for t in action_types],
+            raw_logits=[self.mlps[t.cname](emb[self._action_type_to_graph_part[t]]) for t in action_types],
             keys=[self._action_type_to_key[t] for t in action_types],
-            masks=[self._action_type_to_mask(t, g) for t in action_types],
+            action_masks=[action_type_to_mask(t, g) for t in action_types],
             types=action_types,
         )
 
-    def forward(self, g: gd.Batch, cond: torch.Tensor):
+    def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
         if cond is None:
             cond = g.cond_info
         node_embeddings, graph_embeddings = self.transf(g, cond)
