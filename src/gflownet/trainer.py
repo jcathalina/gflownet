@@ -219,6 +219,7 @@ class GFNTrainer:
         tick = time.time()
         self.model.train()
         try:
+            loss = info = None
             loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
                 raise ValueError("loss is not finite")
