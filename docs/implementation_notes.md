@@ -53,7 +53,7 @@ The data used for training GFlowNets can come from a variety of sources. `DataSo
 - Generating new trajectories (w.r.t a fixed dataset of conditioning goals)
 - Evaluating the model's likelihood on trajectories from a fixed, offline dataset
 
-## Multiprocessing 
+## Multiprocessing
 
 We use the multiprocessing features of torch's `DataLoader` to parallelize data generation and featurization. This is done by setting the `num_workers` (via `cfg.num_workers`) parameter of the `DataLoader` to a value greater than 0. Because workers cannot (easily) use a CUDA handle, we have to resort to a number of tricks.
 
@@ -66,6 +66,3 @@ On message serialization, naively sending batches of data and results (`Batch` a
 We implement two solutions to this problem (in order of preference):
 - using `SharedPinnedBuffer`s, which are shared tensors of fixed size (`cfg.mp_buffer_size`), but initialized once and pinned. This is the fastest solution, but requires that the size of the largest possible batch/return value is known in advance. This should work for any message, but has only been tested with `Batch` and `GraphActionCategorical` messages.
 - using `cfg.pickle_mp_messages`, which simply serializes messages with `pickle`. This prevents the creation of lots of shared memory files, but is slower than the `SharedPinnedBuffer` solution. This should work for any message that `pickle` can handle.
-
-
-

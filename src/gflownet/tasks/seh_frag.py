@@ -129,6 +129,7 @@ class SEHFragTrainer(StandardOnlineTrainer):
     def set_default_hps(self, cfg: Config):
         cfg.hostname = socket.gethostname()
         cfg.pickle_mp_messages = False
+        cfg.mp_buffer_size = 32 * 1024**2  # 32 MB
         cfg.num_workers = 8
         cfg.opt.learning_rate = 1e-4
         cfg.opt.weight_decay = 1e-8
@@ -195,18 +196,14 @@ def main():
     config.log_dir = f"./logs/debug_run_seh_frag_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     config.device = "cuda" if torch.cuda.is_available() else "cpu"
     config.overwrite_existing_exp = True
-    config.algo.num_from_policy = 64
     config.num_training_steps = 1_00
     config.validate_every = 20
     config.num_final_gen_steps = 10
     config.num_workers = 1
     config.opt.lr_decay = 20_000
-    config.opt.clip_grad_type = "total_norm"
     config.algo.sampling_tau = 0.99
     config.cond.temperature.sample_dist = "uniform"
     config.cond.temperature.dist_params = [0, 64.0]
-    config.mp_buffer_size = 32 * 1024**2
-    # config.pickle_mp_messages = True
 
     trial = SEHFragTrainer(config)
     trial.run()
