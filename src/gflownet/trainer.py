@@ -279,8 +279,6 @@ class GFNTrainer:
         num_training_steps = self.cfg.num_training_steps
         logger.info("Starting training")
         start_time = time.time()
-        t0 = time.time()
-        times = []
         for it, batch in zip(range(start, 1 + num_training_steps), cycle(train_dl)):
             # the memory fragmentation or allocation keeps growing, how often should we clean up?
             # is changing the allocation strategy helpful?
@@ -289,10 +287,6 @@ class GFNTrainer:
                 gc.collect()
                 torch.cuda.empty_cache()
             batch = self._maybe_resolve_shared_buffer(batch, train_dl)
-            t1 = time.time()
-            times.append(t1 - t0)
-            print(f"iteration {it} : {t1 - t0:.2f} s, average: {np.mean(times):.2f} s")
-            t0 = t1
             epoch_idx = it // epoch_length
             batch_idx = it % epoch_length
             if self.replay_buffer is not None and len(self.replay_buffer) < self.replay_buffer.warmup:
