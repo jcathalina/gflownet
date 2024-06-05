@@ -18,6 +18,7 @@ from gflownet.online_trainer import StandardOnlineTrainer
 from gflownet.utils.conditioning import TemperatureConditional
 from gflownet.utils.misc import get_worker_device
 from gflownet.utils.transforms import to_logreward
+from gflownet.algo.graph_sampling import GraphSampler   
 
 
 class SEHTask(GFNTask):
@@ -185,6 +186,16 @@ class SEHFragTrainer(StandardOnlineTrainer):
         super().setup()
         self.training_data.setup(self.task, self.ctx)
 
+    def setup_sampler(self):
+        self.sampler = GraphSampler(
+            ctx=self.ctx,
+            env=self.env,
+            max_len=self.cfg.algo.max_len,
+            max_nodes=self.cfg.algo.max_nodes,
+            sample_temp=1,
+            correct_idempotent=self.cfg.algo.tb.do_correct_idempotent,
+            pad_with_terminal_state=self.cfg.algo.tb.do_parameterize_p_b,
+        )
 
 def main():
     """Example of how this model can be run."""

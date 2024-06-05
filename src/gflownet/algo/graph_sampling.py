@@ -11,6 +11,8 @@ from gflownet.envs.graph_building_env import (
     GraphAction,
     GraphActionCategorical,
     GraphActionType,
+    GraphBuildingEnv,
+    GraphBuildingEnvContext,
     action_type_to_mask,
 )
 from gflownet.models.graph_transformer import GraphTransformerGFN
@@ -33,8 +35,65 @@ def relabel(g: Graph, ga: GraphAction):
         ga.target = rmap[ga.target]
     return g, ga
 
+class Sampler:
+    """A class that defines the sampling strategy for trajectories"""
 
-class GraphSampler:
+    ctx: GraphBuildingEnvContext # Define a parent class for context
+    env: GraphBuildingEnv # Define a parent class for environment
+    max_len: int
+    pad_with_terminal_state: bool    
+
+    def sample_from_model(self, model: nn.Module, n: int, cond_info: Tensor, random_action_prob: float = 0.0):
+        """Samples a model in a minibatch
+
+        Parameters
+        ----------
+        model: nn.Module
+            Model whose forward() method returns ActionCategorical instances
+        n: int
+            Number of graphs to sample
+        cond_info: Tensor
+            Conditional information of each trajectory, shape (n, n_info)
+        random_action_prob: float
+            Probability of taking a random action at each step
+
+        Returns
+        -------
+        data: List[Dict]
+           A list of trajectories. Each trajectory is a dict with keys
+           - trajs: List[Tuple[Graph, Action]], the list of states and actions
+           - fwd_logprob: sum logprobs P_F
+           - bck_logprob: sum logprobs P_B
+           - is_valid: is the generated graph valid according to the env & ctx
+        """
+        raise NotImplementedError()
+    
+    def sample_backward_from_graphs(
+        self,
+        graphs: List[Graph],
+        model: Optional[nn.Module],
+        cond_info: Optional[Tensor],
+        random_action_prob: float = 0.0,
+    ):
+        """Sample a model's P_B starting from a list of graphs, or if the model is None, use a uniform distribution
+        over legal actions.
+
+        Parameters
+        ----------
+        graphs: List[Graph]
+            List of Graph endpoints
+        model: nn.Module
+            Model whose forward() method returns GraphActionCategorical instances
+        cond_info: Tensor
+            Conditional information of each trajectory, shape (n, n_info)
+        random_action_prob: float
+            Probability of taking a random action (only used if model parameterizes P_B)
+
+        """
+        raise NotImplementedError()
+
+
+class GraphSampler(Sampler):
     """A helper class to sample from GraphActionCategorical-producing models"""
 
     def __init__(
@@ -105,7 +164,7 @@ class GraphSampler:
         # always be at least a valid index, and will be masked out anyways -- but this isn't ideal.
         # Here we have to pad the backward actions with something, since the backward actions are
         # evaluated at s_{t+1} not s_t.
-        bck_a = [[GraphAction(GraphActionType.Stop)] for _ in range(n)]
+        bck_a = [[self.ctx.GraphAction_to_ActionIndex(self.ctx.graph_to_Data(self.env.new()), GraphAction(GraphActionType.Stop))] for _ in range(n)]
 
         rng = get_worker_rng()
 
@@ -142,8 +201,8 @@ class GraphSampler:
             # Step each trajectory, and accumulate statistics
             for i, j in zip(not_done(range(n)), range(n)):
                 fwd_logprob[i].append(log_probs[j].unsqueeze(0))
-                data[i]["traj"].append((graphs[i], graph_actions[j]))
-                bck_a[i].append(self.env.reverse(graphs[i], graph_actions[j]))
+                data[i]["traj"].append((graphs[i], actions[j]))
+                bck_a[i].append(self.ctx.GraphAction_to_ActionIndex(torch_graphs[i], self.env.reverse(graphs[i], graph_actions[j])))
                 # Check if we're done
                 if graph_actions[j].action is GraphActionType.Stop:
                     done[i] = True
@@ -201,7 +260,7 @@ class GraphSampler:
             if self.pad_with_terminal_state:
                 # TODO: instead of padding with Stop, we could have a virtual action whose
                 # probability always evaluates to 1.
-                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
+                data[i]["traj"].append((graphs[i], self.ctx.GraphAction_to_ActionIndex(self.ctx.graph_to_Data(self.env.new()), GraphAction(GraphActionType.Stop))))
                 data[i]["is_sink"].append(1)
         return data
 
@@ -223,8 +282,6 @@ class GraphSampler:
             Model whose forward() method returns GraphActionCategorical instances
         cond_info: Tensor
             Conditional information of each trajectory, shape (n, n_info)
-        dev: torch.device
-            Device on which data is manipulated
         random_action_prob: float
             Probability of taking a random action (only used if model parameterizes P_B)
 
@@ -234,10 +291,10 @@ class GraphSampler:
         done = [False] * n
         data = [
             {
-                "traj": [(graphs[i], GraphAction(GraphActionType.Stop))],
+                "traj": [(graphs[i], self.ctx.GraphAction_to_ActionIndex(self.ctx.graph_to_Data(graphs[i]), GraphAction(GraphActionType.Stop)))],
                 "is_valid": True,
                 "is_sink": [1],
-                "bck_a": [GraphAction(GraphActionType.Stop)],
+                "bck_a": [self.ctx.GraphAction_to_ActionIndex(self.ctx.graph_to_Data(self.env.new()), GraphAction(GraphActionType.Stop))],
                 "bck_logprobs": [0.0],
                 "result": graphs[i],
             }
@@ -277,11 +334,11 @@ class GraphSampler:
             for i, j in zip(not_done(range(n)), range(n)):
                 if not done[i]:
                     g = graphs[i]
-                    b_a = graph_bck_actions[j]
+                    b_a = bck_actions[j]
                     gp = self.env.step(g, b_a)
                     f_a = self.env.reverse(g, b_a)
                     graphs[i], f_a = relabel(gp, f_a)
-                    data[i]["traj"].append((graphs[i], f_a))
+                    data[i]["traj"].append((graphs[i], self.ctx.GraphAction_to_ActionIndex(torch_graphs[i], f_a)))
                     data[i]["bck_a"].append(b_a)
                     data[i]["is_sink"].append(0)
                     data[i]["bck_logprobs"].append(bck_logprobs[j].item())
@@ -291,10 +348,10 @@ class GraphSampler:
         for i in range(n):
             # See comments in sample_from_model
             data[i]["traj"] = data[i]["traj"][::-1]
-            data[i]["bck_a"] = [GraphAction(GraphActionType.Stop)] + data[i]["bck_a"][::-1]
+            data[i]["bck_a"] = [self.ctx.GraphAction_to_ActionIndex(torch_graphs[i], GraphAction(GraphActionType.Stop))] + data[i]["bck_a"][::-1]
             data[i]["is_sink"] = data[i]["is_sink"][::-1]
             data[i]["bck_logprobs"] = torch.tensor(data[i]["bck_logprobs"][::-1], device=dev).reshape(-1)
             if self.pad_with_terminal_state:
-                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
+                data[i]["traj"].append((graphs[i], self.ctx.GraphAction_to_ActionIndex(torch_graphs[i], GraphAction(GraphActionType.Stop))))
                 data[i]["is_sink"].append(1)
         return data

@@ -25,6 +25,7 @@ from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.utils.misc import create_logger, set_main_process_device, set_worker_rng_seed
 from gflownet.utils.multiprocessing_proxy import mp_object_wrapper
 from gflownet.utils.sqlite_log import SQLiteLogHook
+from gflownet.algo.graph_sampling import Sampler
 
 from .config import Config
 
@@ -57,6 +58,7 @@ class GFNTrainer:
         self.ctx: GraphBuildingEnvContext
         self.task: GFNTask
         self.algo: GFNAlgorithm
+        self.sampler: Sampler
 
         # There are three sources of config values
         #   - The default values specified in individual config classes
@@ -96,6 +98,9 @@ class GFNTrainer:
         raise NotImplementedError()
 
     def setup_algo(self):
+        raise NotImplementedError()
+    
+    def setup_sampler(self):
         raise NotImplementedError()
 
     def setup_data(self):

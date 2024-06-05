@@ -37,7 +37,7 @@ class StandardOnlineTrainer(GFNTrainer):
     def setup_algo(self):
         algo = self.cfg.algo.method
         if algo == "TB":
-            algo = TrajectoryBalance
+            algo = TrajectoryBalance(self.env, self.ctx, self.cfg, self.sampler)
         elif algo == "FM":
             algo = FlowMatching
         elif algo == "A2C":

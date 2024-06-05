@@ -178,7 +178,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             else:
                 col = 1
         return ActionIndex(action_type=type_idx, row_idx=int(row), col_idx=int(col))
-
+    
     def graph_to_Data(self, g: Graph) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
         Parameters

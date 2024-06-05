@@ -10,7 +10,6 @@ from torch import Tensor
 from torch_scatter import scatter, scatter_sum
 
 from gflownet.algo.config import Backward, LossFN, NLoss, TBVariant
-from gflownet.algo.graph_sampling import GraphSampler
 from gflownet.config import Config
 from gflownet.envs.graph_building_env import (
     ActionIndex,
@@ -18,12 +17,11 @@ from gflownet.envs.graph_building_env import (
     GraphAction,
     GraphActionCategorical,
     GraphActionType,
-    GraphBuildingEnv,
-    GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
 from gflownet.trainer import GFNAlgorithm
 from gflownet.utils.misc import get_worker_device
+from gflownet.algo.graph_sampling import Sampler
 
 
 def shift_right(x: torch.Tensor, z=0):
@@ -92,9 +90,10 @@ class TrajectoryBalance(GFNAlgorithm):
 
     def __init__(
         self,
-        env: GraphBuildingEnv,
-        ctx: GraphBuildingEnvContext,
+        env,
+        ctx,
         cfg: Config,
+        sampler: Sampler,
     ) -> None:
         """Instanciate a TB algorithm.
 
@@ -119,7 +118,6 @@ class TrajectoryBalance(GFNAlgorithm):
         self.tb_loss = self.cfg.loss_fn
         self.mask_invalid_rewards = False
         self.reward_normalize_losses = False
-        self.sample_temp = 1
         self.bootstrap_own_reward = self.cfg.bootstrap_own_reward
         # When the model is autoregressive, we can avoid giving it ["A", "AB", "ABC", ...] as a sequence of inputs, and
         # instead give "ABC...Z" as a single input, but grab the logits at every timestep. Only works if using something
@@ -134,15 +132,7 @@ class TrajectoryBalance(GFNAlgorithm):
         assert self.cfg.do_predict_n or self.cfg.n_loss == NLoss.none, "`n_loss != NLoss.none` requires `do_predict_n`"
         self.random_action_prob = [cfg.algo.train_random_action_prob, cfg.algo.valid_random_action_prob]
 
-        self.graph_sampler = GraphSampler(
-            ctx,
-            env,
-            cfg.algo.max_len,
-            cfg.algo.max_nodes,
-            self.sample_temp,
-            correct_idempotent=self.cfg.do_correct_idempotent,
-            pad_with_terminal_state=self.cfg.do_parameterize_p_b,
-        )
+        self.sampler = sampler
         if self.cfg.variant == TBVariant.SubTB1:
             self._subtb_max_len = self.global_cfg.algo.max_len + 2
             self._init_subtb(get_worker_device())
@@ -183,7 +173,7 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         dev = get_worker_device()
         cond_info = cond_info.to(dev) if cond_info is not None else None
-        data = self.graph_sampler.sample_from_model(model, n, cond_info, random_action_prob)
+        data = self.sampler.sample_from_model(model, n, cond_info, random_action_prob)
         if cond_info is not None:
             logZ_pred = model.logZ(cond_info)
             for i in range(n):
@@ -198,6 +188,7 @@ class TrajectoryBalance(GFNAlgorithm):
         random_action_prob: Optional[float] = None,
     ):
         """Generate trajectories from known endpoints
+        This is for a fragment-based environment, where we know the endpoints of the trajectories.
 
         Parameters
         ----------
@@ -219,7 +210,7 @@ class TrajectoryBalance(GFNAlgorithm):
             assert model is not None and cond_info is not None and random_action_prob is not None
             dev = get_worker_device()
             cond_info = cond_info.to(dev)
-            return self.graph_sampler.sample_backward_from_graphs(
+            return self.sampler.sample_backward_from_graphs(
                 graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, random_action_prob
             )
         trajs: List[Dict[str, Any]] = [{"traj": generate_forward_trajectory(i)} for i in graphs]
@@ -230,6 +221,7 @@ class TrajectoryBalance(GFNAlgorithm):
             ] + [1]
             traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(get_worker_device())
             traj["result"] = traj["traj"][-1][0]
+            traj["traj"] = [(g, self.ctx.GraphAction_to_ActionIndex(g, a)) for g, a in traj["traj"]]
             if self.cfg.do_parameterize_p_b:
                 traj["bck_a"] = [GraphAction(GraphActionType.Stop)] + [self.env.reverse(g, a) for g, a in traj["traj"]]
                 # There needs to be an additonal node when we're parameterizing P_B,
@@ -243,6 +235,7 @@ class TrajectoryBalance(GFNAlgorithm):
 
     def get_idempotent_actions(self, g: Graph, gd: gd.Data, gp: Graph, action: GraphAction, return_aidx: bool = True):
         """Returns the list of idempotent actions for a given transition.
+        This is for a fragment-based environment.
 
         Note, this is slow! Correcting for idempotency is needed to estimate p(x) correctly, but
         isn't generally necessary if we mostly care about sampling approximately from the modes
@@ -304,14 +297,14 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         if self.model_is_autoregressive:
             torch_graphs = [self.ctx.graph_to_Data(tj["traj"][-1][0]) for tj in trajs]
+            # "traj" in synthesis-env contain directly action indices. Changing the GraphSampler so that tj["traj"] holds (graph, action)
             actions = [
-                self.ctx.GraphAction_to_ActionIndex(g, i[1]) for g, tj in zip(torch_graphs, trajs) for i in tj["traj"]
+                i[1] for tj in trajs for i in tj["traj"]
             ]
         else:
             torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
             actions = [
-                self.ctx.GraphAction_to_ActionIndex(g, a)
-                for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
+                i[1] for tj in trajs for i in tj["traj"]
             ]
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
@@ -323,6 +316,9 @@ class TrajectoryBalance(GFNAlgorithm):
                     self.ctx.GraphAction_to_ActionIndex(g, a)
                     for g, a in zip(torch_graphs, [i for tj in trajs for i in tj["bck_a"]])
                 ]
+            )
+            batch.bck_actions = torch.tensor(
+                [i for tj in trajs for i in tj["bck_a"]]
             )
             batch.is_sink = torch.tensor(sum([i["is_sink"] for i in trajs], []))
         batch.log_rewards = log_rewards
