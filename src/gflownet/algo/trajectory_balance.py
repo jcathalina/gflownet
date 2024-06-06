@@ -17,6 +17,8 @@ from gflownet.envs.graph_building_env import (
     GraphAction,
     GraphActionCategorical,
     GraphActionType,
+    GraphBuildingEnv,
+    GraphBuildingEnvContext,
     generate_forward_trajectory,
 )
 from gflownet.trainer import GFNAlgorithm
@@ -90,8 +92,8 @@ class TrajectoryBalance(GFNAlgorithm):
 
     def __init__(
         self,
-        env,
-        ctx,
+        env: GraphBuildingEnv,
+        ctx: GraphBuildingEnvContext,
         cfg: Config,
         sampler: Sampler,
     ) -> None:
@@ -221,7 +223,6 @@ class TrajectoryBalance(GFNAlgorithm):
             ] + [1]
             traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(get_worker_device())
             traj["result"] = traj["traj"][-1][0]
-            traj["traj"] = [(g, self.ctx.GraphAction_to_ActionIndex(g, a)) for g, a in traj["traj"]]
             if self.cfg.do_parameterize_p_b:
                 traj["bck_a"] = [GraphAction(GraphActionType.Stop)] + [self.env.reverse(g, a) for g, a in traj["traj"]]
                 # There needs to be an additonal node when we're parameterizing P_B,
@@ -296,29 +297,28 @@ class TrajectoryBalance(GFNAlgorithm):
              A (CPU) Batch object with relevant attributes added
         """
         if self.model_is_autoregressive:
-            torch_graphs = [self.ctx.graph_to_Data(tj["traj"][-1][0]) for tj in trajs]
-            # "traj" in synthesis-env contain directly action indices. Changing the GraphSampler so that tj["traj"] holds (graph, action)
+            torch_graphs = [self.ctx.graph_to_Data(tj["traj"][-1][0], traj_len=k) for tj in trajs for k, _ in enumerate(tj["traj"])]
             actions = [
-                i[1] for tj in trajs for i in tj["traj"]
+                self.ctx.GraphAction_to_ActionIndex(g, i[1], fwd=True) for g, tj in zip(torch_graphs, trajs) for i in tj["traj"]
             ]
         else:
-            torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
+            torch_graphs = [self.ctx.graph_to_Data(i[0], traj_len=k) for tj in trajs for k, i in enumerate(tj["traj"])]
+            print("GraphActions ", [i[1] for tj in trajs for i in tj["traj"]])
             actions = [
-                i[1] for tj in trajs for i in tj["traj"]
+                self.ctx.GraphAction_to_ActionIndex(g, a, fwd=True)
+                for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
             ]
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.log_p_B = torch.cat([i["bck_logprobs"] for i in trajs], 0)
+        print(actions)
         batch.actions = torch.tensor(actions)
         if self.cfg.do_parameterize_p_b:
             batch.bck_actions = torch.tensor(
                 [
-                    self.ctx.GraphAction_to_ActionIndex(g, a)
+                    self.ctx.GraphAction_to_ActionIndex(g, a, fwd=False)
                     for g, a in zip(torch_graphs, [i for tj in trajs for i in tj["bck_a"]])
                 ]
-            )
-            batch.bck_actions = torch.tensor(
-                [i for tj in trajs for i in tj["bck_a"]]
             )
             batch.is_sink = torch.tensor(sum([i["is_sink"] for i in trajs], []))
         batch.log_rewards = log_rewards

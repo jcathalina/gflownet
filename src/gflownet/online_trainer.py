@@ -37,7 +37,7 @@ class StandardOnlineTrainer(GFNTrainer):
     def setup_algo(self):
         algo = self.cfg.algo.method
         if algo == "TB":
-            algo = TrajectoryBalance(self.env, self.ctx, self.cfg, self.sampler)
+            algo = TrajectoryBalance
         elif algo == "FM":
             algo = FlowMatching
         elif algo == "A2C":
@@ -46,7 +46,7 @@ class StandardOnlineTrainer(GFNTrainer):
             algo = SoftQLearning
         else:
             raise ValueError(algo)
-        self.algo = algo(self.env, self.ctx, self.cfg)
+        self.algo = algo(self.env, self.ctx, self.cfg, self.sampler)
 
     def setup_data(self):
         self.training_data = []

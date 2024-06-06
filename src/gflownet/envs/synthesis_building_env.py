@@ -16,7 +16,7 @@ import torch_geometric.data as gd
 from rdkit import Chem, RDLogger
 from rdkit.Chem import BondType, ChiralType
 
-from gflownet.envs.graph_building_env import Graph
+from gflownet.envs.graph_building_env import Graph, GraphAction, GraphActionType, ActionIndex, GraphBuildingEnvContext
 from gflownet.utils.synthesis_utils import Reaction
 from gflownet.tasks.config import SEHReactionTaskConfig
 
@@ -37,32 +37,32 @@ with open(
 
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
 
-class ActionType(enum.Enum):
-    # Forward actions
-    Stop = enum.auto()
-    ReactUni = enum.auto()
-    ReactBi = enum.auto()
-    AddFirstReactant = enum.auto()
-    AddReactant = enum.auto()
-    # Backward actions
-    BckReactUni = enum.auto()
-    BckReactBi = enum.auto()
-    BckRemoveFirstReactant = enum.auto()
+# class GraphActionType(enum.Enum):
+#     # Forward actions
+#     Stop = enum.auto()
+#     ReactUni = enum.auto()
+#     ReactBi = enum.auto()
+#     AddFirstReactant = enum.auto()
+#     AddReactant = enum.auto()
+#     # Backward actions
+#     BckReactUni = enum.auto()
+#     BckReactBi = enum.auto()
+#     BckRemoveFirstReactant = enum.auto()
 
-    @cached_property
-    def cname(self):
-        return re.sub(r"(?<!^)(?=[A-Z])", "_", self.name).lower()
+#     @cached_property
+#     def cname(self):
+#         return re.sub(r"(?<!^)(?=[A-Z])", "_", self.name).lower()
 
-    @cached_property
-    def mask_name(self):
-        return self.cname + "_mask"
+#     @cached_property
+#     def mask_name(self):
+#         return self.cname + "_mask"
 
-    @cached_property
-    def is_backward(self):
-        return self.name.startswith("Remove")
+#     @cached_property
+#     def is_backward(self):
+#         return self.name.startswith("Remove")
 
 
-class ReactionTemplateEnvContext:
+class ReactionTemplateEnvContext(GraphBuildingEnvContext):
     """This context specifies how to create molecules by applying reaction templates."""
 
     def __init__(
@@ -163,31 +163,85 @@ class ReactionTemplateEnvContext:
 
         # Order in which models have to output logits
         self.action_type_order = [
-            ActionType.Stop,
-            ActionType.ReactUni,
-            ActionType.ReactBi,
-            ActionType.AddReactant,
-            ActionType.AddFirstReactant,
-        ]  # ActionType.AddReactant used separately in a hook during sampling
+            GraphActionType.Stop,
+            GraphActionType.ReactUni,
+            GraphActionType.ReactBi,
+            GraphActionType.AddReactant,
+            GraphActionType.AddFirstReactant,
+        ]  # GraphActionType.AddReactant used separately in a hook during sampling
         self.bck_action_type_order = [
-            ActionType.BckReactUni,
-            ActionType.BckReactBi,
-            ActionType.BckRemoveFirstReactant,
+            GraphActionType.BckReactUni,
+            GraphActionType.BckReactBi,
+            GraphActionType.BckRemoveFirstReactant,
         ]  # (0, j, None), (1, j, 0) or (1, j, 1), (2, None, None)
 
-    def aidx_to_action_type(self, aidx: Tuple[int, int, Optional[int]], fwd: bool = True):
+    def aidx_to_action_type(self, aidx: ActionIndex, fwd: bool = True):
         if fwd:
             action_type_order = self.action_type_order
         else:
             action_type_order = self.bck_action_type_order
         return action_type_order[aidx[0]]
-
-    def action_type_to_aidx(self, action_type: ActionType, fwd: bool = True):
+    
+    def action_type_to_aidx(self, action_type: GraphActionType, fwd: bool = True):
         if fwd:
             action_type_order = self.action_type_order
         else:
             action_type_order = self.bck_action_type_order
         return action_type_order.index(action_type)
+
+    
+    def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True) -> GraphAction:
+        """Translate an ActionIndex to a GraphAction.
+        
+        Parameters
+        ----------
+        aidx: ActionIndex
+            An integer representing an action.
+        fwd: bool, default=True
+            Whether the action is a forward or backward action.
+
+        Returns
+        -------
+        action: GraphAction
+            An action whose type is one of Stop, ReactUni, ReactBi, AddReactant, AddFirstReactant, BckReactUni, BckReactBi, BckRemoveFirstReactant.
+        """
+        if fwd:
+            action_type_order = self.action_type_order
+        else:
+            action_type_order = self.bck_action_type_order
+
+        bb = aidx.bb_idx
+        rxn = aidx.rxn_idx
+        action_idx = aidx.action_type
+
+        return GraphAction(action=action_type_order[action_idx], rxn=rxn, bb=bb) 
+    
+    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction, fwd: bool = True) -> int:
+        """Translate a GraphAction to an ActionIndex.
+        
+        Parameters
+        ----------
+        action: GraphAction
+            An action whose type is one of Stop, ReactUni, ReactBi, AddReactant, AddFirstReactant, BckReactUni, BckReactBi, BckRemoveFirstReactant.
+        fwd: bool, default=True
+            Whether the action is a forward or backward action.
+
+        Returns
+        -------
+        action_idx: ActionIndex
+            The ActionIndex corresponding to the action.
+        """
+        if fwd:
+            action_type_order = self.action_type_order
+        else:
+            action_type_order = self.bck_action_type_order
+
+        type_idx = action_type_order.index(action.action)
+        rxn_idx = action.rxn
+        bb_idx = action.bb
+
+        return ActionIndex(action_type=type_idx, rxn_idx=rxn_idx, bb_idx=bb_idx)
+
 
     def create_masks(self, smi: Union[str, Chem.Mol, Graph], fwd: bool = True, unimolecular: bool = True) -> List[int]:
         """Creates masks for reaction templates for a given molecule.
@@ -371,9 +425,24 @@ class ReactionTemplateEnvContext:
                 [traj_len]
             ),  # if traj_len is 0, the only possible action is AddFirstReactant; all other actions are masked
         )
+        # If the length of the trajectory is 0, the only possible action is AddFirstReactant; all other actions are masked
+        # if traj_len == 0:
+        #     data.add_first_reactant_mask = torch.zeros(len(data.x), dtype=torch.bool)
+        #     data.stop_mask = torch.ones(len(data.x), dtype=torch.bool)
+        #     data.react_uni_mask = torch.zeros(len(data.x), dtype=torch.bool)
+        #     data.react_bi_mask = torch.zeros(len(data.x), dtype=torch.bool)
+        #     data.bck_react_uni_mask = torch.zeros(len(data.x), dtype=torch.bool)
+        #     data.bck_react_bi_mask = torch.zeros(len(data.x), dtype=torch.bool)
+        # else:
+        #     data.add_first_reactant_mask = torch.ones(len(data.x), dtype=torch.bool)
+        #     data.stop_mask = torch.zeros(len(data.x), dtype=torch.bool)
+        #     data.react_uni_mask = self.create_masks(g, fwd=True, unimolecular=True)
+        #     data.react_bi_mask = self.create_masks(g, fwd=True, unimolecular=False)
+        #     data.bck_react_uni_mask = self.create_masks(g, fwd=False, unimolecular=True)
+        #     data.bck_react_bi_mask = self.create_masks(g, fwd=False, unimolecular=False)
         data = gd.Data(**{k: torch.from_numpy(v) for k, v in data.items()})
         data.edge_attr = data.edge_attr.to(torch.float32)
-        data.traj_len = data.traj_len.to(torch.int32)
+        # data.traj_len = data.traj_len.to(torch.int32)
         data.x = data.x.to(torch.float32)
         return data
 
@@ -419,43 +488,42 @@ class ReactionTemplateEnv:
     def empty_graph(self) -> Graph:
         return Graph()
 
-    def step(self, smi: Union[str, Chem.Mol, Graph], action: Tuple[int, int, Optional[int]]) -> Chem.Mol:
+    def step(self, smi: Union[str, Chem.Mol, Graph], action: GraphAction) -> Chem.Mol:
         """Applies the action to the current state and returns the next state.
 
         Args:
             mol (Chem.Mol): Current state as a SMILES string / RDKit mol / Graph.
-            action Tuple[int, int, Optional[int]]: Action indices to apply to the current state.
-            (ActionType, reaction_template_idx, reactant_idx)
+            action (GraphAction): The action taken on the mol, indices must match
 
         Returns:
             (Chem.Mol): Next state as an RDKit mol.
         """
         mol = self.ctx.get_mol(smi)
         Chem.SanitizeMol(mol)
-        if self.ctx.aidx_to_action_type(action) == ActionType.Stop:
+        if action.action is GraphActionType.Stop:
             return mol
         elif (
-            self.ctx.aidx_to_action_type(action) == ActionType.AddReactant
-            or self.ctx.aidx_to_action_type(action) == ActionType.AddFirstReactant
+            action.action is GraphActionType.AddReactant # why this also?
+            or action.action is GraphActionType.AddFirstReactant
         ):
-            return self.ctx.get_mol(self.ctx.building_blocks[action[1]])
-        elif self.ctx.aidx_to_action_type(action) == ActionType.ReactUni:
-            reaction = self.ctx.unimolecular_reactions[action[1]]
+            return self.ctx.get_mol(self.ctx.building_blocks[action.bb])
+        elif action.action is GraphActionType.ReactUni:
+            reaction = self.ctx.unimolecular_reactions[action.rxn]
             p = reaction.run_reactants((mol,))
             return p
         else:
-            reaction = self.ctx.bimolecular_reactions[action[1]]
-            reactant2 = self.ctx.get_mol(self.ctx.building_blocks[action[2]])
+            reaction = self.ctx.bimolecular_reactions[action.rxn]
+            reactant2 = self.ctx.get_mol(self.ctx.building_blocks[action.bb])
             p = reaction.run_reactants((mol, reactant2))
             return p
 
-    def backward_step(self, smi: Union[str, Chem.Mol, Graph], action: Tuple[int, int]) -> Chem.Mol:
+    def backward_step(self, smi: Union[str, Chem.Mol, Graph], action: GraphAction) -> Chem.Mol:
         """Applies the action to the current state and returns the previous (parent) state.
 
         Args:
             mol (Chem.Mol): Current state as an RDKit Mol object.
             action: Tuple[int, int]: Backward action indices to apply to the current state.
-            (ActionType, reaction_template_idx)
+            (GraphActionType, reaction_template_idx)
 
         Returns:
             (Chem.Mol): Previous state as an RDKit mol and if the reaction is bimolecular,
@@ -465,13 +533,13 @@ class ReactionTemplateEnv:
         """
         mol = self.ctx.get_mol(smi)
         # Chem.SanitizeMol(mol)
-        if self.ctx.aidx_to_action_type(action, fwd=False) == ActionType.BckRemoveFirstReactant:
+        if action.action is GraphActionType.BckRemoveFirstReactant:
             return self.ctx.get_mol(""), None
-        elif self.ctx.aidx_to_action_type(action, fwd=False) == ActionType.BckReactUni:
-            reaction = self.ctx.unimolecular_reactions[action[1]]
+        elif action.action is GraphActionType.BckReactUni:
+            reaction = self.ctx.unimolecular_reactions[action.rxn]
             return reaction.run_reverse_reactants((mol,)), None  # return the product and None (no reactant was removed)
         else:  # if bimolecular
-            reaction = self.ctx.bimolecular_reactions[action[1]]
+            reaction = self.ctx.bimolecular_reactions[action.rxn]
             products = reaction.run_reverse_reactants((mol,))
             products_smi = [Chem.MolToSmiles(p) for p in products]
 
@@ -492,7 +560,7 @@ class ReactionTemplateEnv:
             try:
                 rw_mol = Chem.RWMol(selected_product)
             except:
-                print(action[0], action[1], Chem.MolToSmiles(mol))
+                print(action.action, action.rxn, Chem.MolToSmiles(mol))
             atoms_to_remove = [atom.GetIdx() for atom in rw_mol.GetAtoms() if atom.GetSymbol() == "*"]
             for idx in sorted(
                 atoms_to_remove, reverse=True
@@ -576,7 +644,7 @@ class ActionCategorical:
         graphs: gd.Batch,
         graph_embeddings: torch.Tensor,
         logits: List[torch.Tensor],
-        types: List[ActionType],
+        types: List[GraphActionType],
         masks: List[torch.Tensor] = None,
         fwd: bool = True,
     ):
@@ -592,7 +660,7 @@ class ActionCategorical:
             there are m possible actions per action type
             The length of the `logits` list is equal to the number of action
             types available.
-        types: List[ActionType]
+        types: List[GraphActionType]
             The action type each logit group corresponds to.
         masks: List[Tensor], default=None
             If not None, a list of broadcastable tensors that multiplicatively
@@ -619,7 +687,7 @@ class ActionCategorical:
         self.action_hierarchy = {
             "fwd": {
                 "primary": types,
-                "secondary": [ActionType.AddReactant],
+                "secondary": [GraphActionType.AddReactant],
             },
             "bck": {
                 "primary": types,
@@ -631,7 +699,7 @@ class ActionCategorical:
         self.logits = logits
         if self.fwd:
             self.action_type_to_logits_index = {
-                action_type: i for i, action_type in enumerate(types + [ActionType.AddReactant])
+                action_type: i for i, action_type in enumerate(types + [GraphActionType.AddReactant])
             }
         else:
             self.action_type_to_logits_index = {action_type: i for i, action_type in enumerate(types)}
@@ -759,7 +827,7 @@ class ActionCategorical:
         rxn_features = torch.zeros(model.env_ctx.num_bimolecular_rxns).to(emb.device)
         rxn_features[rxn_id] = 1
         expanded_input = torch.cat((emb, rxn_features), dim=-1)
-        return model.mlps[ActionType.AddReactant.cname](expanded_input)
+        return model.mlps[GraphActionType.AddReactant.cname](expanded_input)
 
     def sample(self, traj_len: Optional[int], nx_graphs: List[nx.Graph] = None, model: nn.Module = None):
         """Samples from the categorical distribution"""
@@ -767,15 +835,16 @@ class ActionCategorical:
         # The first action in a trajectory is always AddFirstReactant (select a building block)
         if traj_len == 0:
             noise = torch.rand(
-                primary_logits[self.action_type_to_logits_index[ActionType.AddFirstReactant]].shape, device=self.dev
+                primary_logits[self.action_type_to_logits_index[GraphActionType.AddFirstReactant]].shape, device=self.dev
             )
             gumbel = primary_logits[0] - (-noise.log()).log()
             argmax = self.argmax(x=[gumbel])
-            action_type = self.ctx.action_type_to_aidx(ActionType.AddFirstReactant)
-            return [(action_type, a[1], None) for a in argmax]
+            action_type = self.ctx.action_type_to_aidx(GraphActionType.AddFirstReactant)
+            # action_type = self.ctx.GraphAction_to_ActionIndex(GraphAction(GraphActionType.AddFirstReactant)).action_type
+            return [ActionIndex(action_type=action_type, rxn_idx=None, bb_idx=a[1]) for a in argmax]
         if traj_len == 1:
             # we ensure that a Stop action does not get sampled right at the beginning of the trajectory
-            stop_action_idx = self.action_type_to_logits_index[ActionType.Stop]
+            stop_action_idx = self.action_type_to_logits_index[GraphActionType.Stop]
             stop_action_logits = self.primary_logits[
                 stop_action_idx
             ]  # just in case a stop action is required because of invalid bb and we need to replace the mask with original value
@@ -786,16 +855,16 @@ class ActionCategorical:
         gumbel = [logit - (-noise.log()).log() for logit, noise in zip(primary_logits, u)]
         argmax = self.argmax(x=gumbel)  # tuple of action type, action idx
         for i, t in enumerate(argmax):
-            if self.ctx.aidx_to_action_type(t, fwd=self.fwd) == ActionType.Stop:
-                argmax[i] = (0, None, None)  # argmax returns 0 for ActionIdx
-            elif self.ctx.aidx_to_action_type(t, fwd=self.fwd) in [ActionType.ReactUni, ActionType.BckReactUni]:
-                argmax[i] = t + (None,)  # pad with None
-            elif self.ctx.aidx_to_action_type(t, fwd=self.fwd) == ActionType.ReactBi:  # sample reactant
+            if self.ctx.aidx_to_action_type(t, fwd=self.fwd) == GraphActionType.Stop:
+                argmax[i] = ActionIndex(action_type=0, rxn_idx=None, bb_idx=None)
+            elif self.ctx.aidx_to_action_type(t, fwd=self.fwd) in [GraphActionType.ReactUni, GraphActionType.BckReactUni]:
+                argmax[i] = ActionIndex(action_type=t[0], rxn_idx=t[1], bb_idx=None)
+            elif self.ctx.aidx_to_action_type(t, fwd=self.fwd) == GraphActionType.ReactBi:  # sample reactant
                 masks = torch.tensor(self.ctx.create_masks_for_bb_from_precomputed(nx_graphs[i], t[1]), device=self.dev)
                 if torch.all(masks == 0.0):
                     if traj_len == 1:
                         self.primary_logits[0][i] = stop_action_logits[i]
-                    argmax[i] = (0, None, None)
+                    argmax[i] = ActionIndex(action_type=0, rxn_idx=None, bb_idx=None)
                     continue
                 # Call the hook to get the logits for the AddReactant action
                 model.register_add_reactant_hook(self.add_reactant_hook)
@@ -810,13 +879,13 @@ class ActionCategorical:
                 gumbel = masked_logits - (-noise.log()).log()
                 max_idx = int(gumbel.argmax())
                 assert masks[max_idx] == 1.0, "This index should not be masked"
-                argmax[i] = t + (max_idx,)
+                argmax[i] = ActionIndex(action_type=t[0], rxn_idx=t[1], bb_idx=max_idx)
             # else: # TODO Action type BckReactBi
         return argmax
 
     def log_prob(
         self,
-        actions: List[Tuple[int, int, int]],
+        actions: List[ActionIndex],
         traj_idcs: Optional[torch.tensor] = None,
         nx_graphs: Optional[List[nx.Graph]] = None,
         model: Optional[nn.Module] = None,
@@ -825,25 +894,25 @@ class ActionCategorical:
         # Initialize a tensor to hold the log probabilities for each action
         if self.fwd:
             for i, (action, traj_idx) in enumerate(zip(actions, traj_idcs)):
-                action_type, action_idx, action2_idx = action
+                action_type, rxn_idx, bb_idx = action.action_type, action.rxn_idx, action.bb_idx
                 # Instances where we've changed the logits values during sampling:
                 if (
-                    traj_idx == 1 and self.ctx.aidx_to_action_type(action, fwd=self.fwd) != ActionType.Stop
+                    traj_idx == 1 and self.ctx.aidx_to_action_type(action, fwd=self.fwd) != GraphActionType.Stop
                 ):  # if the trajectory is of length 1 we have masked stop actions;
                     # but we have unmasked them if there was no other action available (line 804)
-                    stop_action_idx = self.action_type_to_logits_index[ActionType.Stop]
+                    stop_action_idx = self.action_type_to_logits_index[GraphActionType.Stop]
                     self.primary_logits[stop_action_idx][i] = (
                         torch.zeros_like(self.primary_logits[stop_action_idx][i]) - 1000.0
                     )
                 if (
-                    self.ctx.aidx_to_action_type(action, fwd=self.fwd) == ActionType.ReactBi
+                    self.ctx.aidx_to_action_type(action, fwd=self.fwd) == GraphActionType.ReactBi
                 ):  # secondary logits were computed
                     masks = torch.tensor(
-                        self.ctx.create_masks_for_bb_from_precomputed(nx_graphs[i], action_idx), device=self.dev
+                        self.ctx.create_masks_for_bb_from_precomputed(nx_graphs[i], rxn_idx), device=self.dev
                     )
                     model.register_add_reactant_hook(self.add_reactant_hook)
                     add_reactant_logits = model.call_add_reactant_hook(
-                        action_idx, self.graph_embeddings[i], self.graphs[i]
+                        rxn_idx, self.graph_embeddings[i], self.graphs[i]
                     )
                     masked_logits = torch.zeros_like(add_reactant_logits) - 1000.0
                     masked_logits[masks.bool()] = add_reactant_logits[masks.bool()]
@@ -855,27 +924,27 @@ class ActionCategorical:
         log_probs = torch.empty(len(actions), device=self.dev)
         for i, action in enumerate(actions):
             # Get the log probabilities for the current action type
-            action_type, action_idx, action2_idx = action
-            if self.ctx.aidx_to_action_type(action, fwd=self.fwd) == ActionType.Stop:
+            action_type, rxn_idx, bb_idx = action.action_type, action.rxn_idx, action.bb_idx
+            if self.ctx.aidx_to_action_type(action, fwd=self.fwd) == GraphActionType.Stop:
                 log_prob = logprobs[action_type][i]
-            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == ActionType.ReactUni:
-                log_prob = logprobs[action_type][i, action_idx]
-            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == ActionType.ReactBi:
+            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == GraphActionType.ReactUni:
+                log_prob = logprobs[action_type][i, rxn_idx]
+            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == GraphActionType.ReactBi:
                 bireact_log_probs = logprobs[action_type]
-                addreactant_log_probs = logprobs[self.action_type_to_logits_index[ActionType.AddReactant]]
-                log_prob = bireact_log_probs[i, action_idx] + addreactant_log_probs[i, action2_idx]
-            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == ActionType.AddFirstReactant:
-                log_prob = logprobs[self.action_type_to_logits_index[ActionType.AddFirstReactant]][i, action_idx]
+                addreactant_log_probs = logprobs[self.action_type_to_logits_index[GraphActionType.AddReactant]]
+                log_prob = bireact_log_probs[i, rxn_idx] + addreactant_log_probs[i, bb_idx]
+            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == GraphActionType.AddFirstReactant:
+                log_prob = logprobs[self.action_type_to_logits_index[GraphActionType.AddFirstReactant]][i, rxn_idx]
             elif action == [0, None, None] and not self.fwd:
                 log_prob = torch.tensor([0.0], device=self.dev, dtype=torch.float64)
-            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == ActionType.BckReactUni:
-                log_prob = logprobs[self.action_type_to_logits_index[ActionType.BckReactUni]][i, action_idx]
+            elif self.ctx.aidx_to_action_type(action, fwd=self.fwd) == GraphActionType.BckReactUni:
+                log_prob = logprobs[self.action_type_to_logits_index[GraphActionType.BckReactUni]][i, rxn_idx]
             else:
                 bireact_log_probs = logprobs[action_type]
-                if action2_idx:  # if both products are BB and the remaining BB was selected randomly
-                    log_prob = bireact_log_probs[i, action_idx] - math.log(2)
+                if bb_idx:  # if both products are BB and the remaining BB was selected randomly
+                    log_prob = bireact_log_probs[i, rxn_idx] - math.log(2)
                 else:
-                    log_prob = bireact_log_probs[i, action_idx]
+                    log_prob = bireact_log_probs[i, rxn_idx]
             log_probs[i] = log_prob
         return log_probs
 

@@ -63,8 +63,16 @@ class QM9MOOTaskConfig(StrictDataClass):
 
 
 @dataclass
+class SEHReactionTaskConfig:
+    templates_filename: str = "hb_edited.txt"
+    building_blocks_filename: str = "short_building_blocks_6k.txt"
+    precomputed_bb_masks_filename: str = "precomputed_bb_masks_6k.pkl"
+
+
+@dataclass
 class TasksConfig(StrictDataClass):
     qm9: QM9TaskConfig = field(default_factory=QM9TaskConfig)
     qm9_moo: QM9MOOTaskConfig = field(default_factory=QM9MOOTaskConfig)
     seh: SEHTaskConfig = field(default_factory=SEHTaskConfig)
     seh_moo: SEHMOOTaskConfig = field(default_factory=SEHMOOTaskConfig)
+    seh_reactions: SEHReactionTaskConfig = field(default_factory=SEHReactionTaskConfig)

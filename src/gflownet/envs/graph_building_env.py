@@ -62,11 +62,20 @@ class GraphActionType(enum.Enum):
     AddEdge = enum.auto()
     SetNodeAttr = enum.auto()
     SetEdgeAttr = enum.auto()
+    # Synthesis actions
+    ReactUni = enum.auto()
+    ReactBi = enum.auto()
+    AddFirstReactant = enum.auto()
+    AddReactant = enum.auto()
     # Backward actions
     RemoveNode = enum.auto()
     RemoveEdge = enum.auto()
     RemoveNodeAttr = enum.auto()
     RemoveEdgeAttr = enum.auto()
+    # Synthesis actions
+    BckReactUni = enum.auto()
+    BckReactBi = enum.auto()
+    BckRemoveFirstReactant = enum.auto()
 
     @cached_property
     def cname(self):
@@ -93,12 +102,16 @@ class ActionIndex(NamedTuple):
     """
 
     action_type: int  # Index of the action type according to GraphActionType
-    row_idx: int  # Index of the element the action applies to (e.g. node or edge)
-    col_idx: int  # Index of the action variant (e.g. which attribute to set)
+    # Molecular graph env-specific indices
+    row_idx: Optional[int] = None  # Index of the element the action applies to (e.g. node or edge)
+    col_idx: Optional[int] = None  # Index of the action variant (e.g. which attribute to set)
+    # Synthesis env-specific indices
+    rxn_idx: Optional[int] = None  # Index of the reaction
+    bb_idx: Optional[int] = None  # Index of the building block
 
 
 class GraphAction:
-    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None):
+    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None, rxn=None, bb=None):
         """A single graph-building action
 
         Parameters
@@ -115,10 +128,14 @@ class GraphAction:
             the value (e.g. new node type) applied
         """
         self.action: GraphActionType = action
+        # molecular graph-related indices
         self.source: Optional[int] = source
         self.target: Optional[int] = target
         self.attr: Optional[str] = attr
         self.value: Optional[Any] = value
+        # synthesis-related indices
+        self.rxn: Optional[int] = rxn
+        self.bb: Optional[int] = bb
 
     def __repr__(self):
         attrs = ", ".join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
@@ -902,8 +919,19 @@ class GraphBuildingEnvContext:
     device: torch.device
     action_type_order: List[GraphActionType]
     bck_action_type_order: List[GraphActionType]
+    # These values are used by Models to know how many inputs/logits to produce
+    edges_are_duplicated = True
+    # The ordering in which the model sees & produces logits for edges matters,
+    # i.e. action(u, v) != action(v, u).
+    # This is because of the way we encode attachment points (see below on semantics of SetEdgeAttr)
+    edges_are_unordered = False
+    num_new_node_values: int = 0
+    num_node_attrs: int = 0
+    num_edge_attrs: int = 0
+    num_node_attr_logits: int = 0
+    num_edge_attr_logits: int = 0
 
-    def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True) -> GraphAction:
+    def ActionIndex_to_GraphAction(self, g: Optional[gd.Data] = None, aidx: ActionIndex = None, fwd: bool = True) -> GraphAction:
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction
         Parameters
         ----------
@@ -921,7 +949,7 @@ class GraphBuildingEnvContext:
         """
         raise NotImplementedError()
 
-    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
+    def GraphAction_to_ActionIndex(self, g: Optional[gd.Data] = None, action: GraphAction = None, fwd: Optional[bool] = None) -> ActionIndex:
         """Translate a GraphAction to an ActionIndex (e.g. from a GraphActionCategorical)
         Parameters
         ----------
@@ -937,7 +965,7 @@ class GraphBuildingEnvContext:
         """
         raise NotImplementedError()
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, traj_len: int) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
         The logic to build masks for prohibited actions can be implemented here,
         packed in the data object and used in the GraphActionCategorical.

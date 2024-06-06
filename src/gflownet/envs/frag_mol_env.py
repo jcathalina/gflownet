@@ -131,7 +131,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             attr = "src_attach" if aidx.col_idx == 0 else "dst_attach"
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr)
 
-    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
+    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction, fwd: bool) -> ActionIndex:
         """Translate a GraphAction to an ActionIndex
 
         Parameters
@@ -179,7 +179,7 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
                 col = 1
         return ActionIndex(action_type=type_idx, row_idx=int(row), col_idx=int(col))
     
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, traj_len: int) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance
         Parameters
         ----------

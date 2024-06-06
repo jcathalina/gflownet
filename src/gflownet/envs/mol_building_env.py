@@ -194,7 +194,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             attr = self.bond_attrs[aidx.col_idx]
             return GraphAction(t, source=a.item(), target=b.item(), attr=attr)
 
-    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
+    def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction, fwd: bool) -> ActionIndex:
         """Translate a GraphAction to an index tuple"""
         for u in [self.action_type_order, self.bck_action_type_order]:
             if action.action in u:
@@ -253,7 +253,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             raise ValueError(f"Unknown action type {action.action}")
         return ActionIndex(action_type=type_idx, row_idx=int(row), col_idx=int(col))
 
-    def graph_to_Data(self, g: Graph) -> gd.Data:
+    def graph_to_Data(self, g: Graph, traj_len: int) -> gd.Data:
         """Convert a networkx Graph to a torch geometric Data instance"""
         x = np.zeros((max(1, len(g.nodes)), self.num_node_dim - self.num_rw_feat), dtype=np.float32)
         x[0, -1] = len(g.nodes) == 0

@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from gflownet.envs.synthesis_building_env import Graph
-from gflownet.envs.synthesis_building_env import ActionType
+from gflownet.envs.synthesis_building_env import GraphActionType, GraphAction, ActionIndex
 from gflownet.algo.graph_sampling import Sampler
 from gflownet.utils.misc import get_worker_device, get_worker_rng
 
@@ -48,7 +48,7 @@ class SynthesisSampler(Sampler):
         -------
         data: List[Dict]
            A list of trajectories. Each trajectory is a dict with keys
-           - trajs: List[Tuple[Graph, GraphAction]], the list of states and actions
+           - trajs: List[Tuple[Graph, Action]], the list of states and actions
            - fwd_logprob: sum logprobs P_F
            - bck_logprob: sum logprobs P_B
            - is_valid: is the generated graph valid according to the env & ctx
@@ -60,7 +60,7 @@ class SynthesisSampler(Sampler):
 
         graphs = [self.env.empty_graph() for _ in range(n)]
         done = [False] * n
-        bck_a = [[(0, None, None)] for _ in range(n)]  # 0 corresponds to ActionType.Stop
+        bck_a = [[GraphAction(GraphActionType.Stop)] for _ in range(n)]  # 0 corresponds to GraphActionType.Stop
 
         rng = get_worker_rng()
 
@@ -72,7 +72,7 @@ class SynthesisSampler(Sampler):
             nx_graphs = [g for g in not_done(graphs)]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
             fwd_cat, *_, _ = model(
-                self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask], is_first_action=t == 0
+                self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask]
             )
             if random_action_prob > 0:
                 # Device which graphs in the minibatch will get their action randomized
@@ -85,28 +85,31 @@ class SynthesisSampler(Sampler):
                     for i, b in zip(fwd_cat.logits, fwd_cat.batch)
                 ]
             actions = fwd_cat.sample(traj_len=t, nx_graphs=nx_graphs, model=model)
+            graph_actions = [self.ctx.ActionIndex_to_GraphAction(g, a, fwd=True) for g, a in zip(torch_graphs, actions)]
             # Step each trajectory, and accumulate statistics
             for i, j in zip(not_done(range(n)), range(n)):
-                data[i]["traj"].append((graphs[i], actions[j]))
-                if actions[j][0] == 0:  # 0 is ActionType.Stop
+                data[i]["traj"].append((graphs[i], graph_actions[j]))
+                if graph_actions[j].action is GraphActionType.Stop:
                     done[i] = True
                     bck_logprob[i].append(torch.tensor([1.0], device=dev).log())
                     data[i]["is_sink"].append(1)
-                    bck_a[i].append((0, None, None))
+                    bck_a[i].append(GraphAction(GraphActionType.Stop))
                 else:  # If not done, step the self.environment
                     gp = graphs[i]
-                    gp = self.env.step(graphs[i], actions[j])
-                    if self.ctx.aidx_to_action_type(actions[j], fwd=True) == ActionType.AddFirstReactant:
-                        b_a = (2, None, None)
-                    elif self.ctx.aidx_to_action_type(actions[j], fwd=True) == ActionType.ReactUni:
-                        b_a = (0, actions[j][1], None)
+                    gp = self.env.step(graphs[i], graph_actions[j])
+                    if graph_actions[j].action is GraphActionType.AddFirstReactant:
+                        b_a_idx = ActionIndex(action_type=2, rxn_idx=None, bb_idx=None)
+                    elif graph_actions[j].action is GraphActionType.ReactUni:
+                        b_a_idx = ActionIndex(action_type=0, rxn_idx=graph_actions[j].rxn, bb_idx=None)
                     else:
-                        _, both_are_bb = self.env.backward_step(gp, (1, actions[j][1]))
+                        b_a_idx = ActionIndex(action_type=1, rxn_idx=graph_actions[j].rxn, bb_idx=0)
+                        b_a = self.ctx.ActionIndex_to_GraphAction(gp, b_a_idx, fwd=False)
+                        _, both_are_bb = self.env.backward_step(gp, b_a)
                         if both_are_bb:
-                            b_a = (1, actions[j][1], 1)
+                            b_a_idx = ActionIndex(action_type=1, rxn_idx=graph_actions[j].rxn, bb_idx=1)
                         else:
-                            b_a = (1, actions[j][1], 0)
-                    bck_a[i].append(b_a)
+                            b_a_idx = ActionIndex(action_type=1, rxn_idx=graph_actions[j].rxn, bb_idx=0)
+                    bck_a[i].append(self.ctx.ActionIndex_to_GraphAction(gp, b_a_idx, fwd=False))
                     if t == self.max_len - 1:
                         done[i] = True
                     n_back = self.env.count_backward_transitions(gp)
@@ -115,7 +118,7 @@ class SynthesisSampler(Sampler):
                     else:
                         bck_logprob[i].append(torch.tensor([0.001], device=dev).log())
                     data[i]["is_sink"].append(0)
-                    graphs[i] = self.ctx.mol_to_graph(gp)
+                    graphs[i] = self.ctx.obj_to_graph(gp)
                 if done[i] and len(data[i]["traj"]) < 2:
                     data[i]["is_valid"] = False
             if all(done):
@@ -127,7 +130,7 @@ class SynthesisSampler(Sampler):
             data[i]["result"] = graphs[i]
             data[i]["bck_a"] = bck_a[i]
             if self.pad_with_terminal_state:
-                data[i]["traj"].append((graphs[i], (0, None, None)))
+                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
                 data[i]["is_sink"].append(1)
         return data
 

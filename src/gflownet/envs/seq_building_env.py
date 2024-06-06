@@ -104,7 +104,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
             return GraphAction(t, value=aidx.col_idx)
         raise ValueError(aidx)
 
-    def GraphAction_to_ActionIndex(self, g: Data, action: GraphAction) -> ActionIndex:
+    def GraphAction_to_ActionIndex(self, g: Data, action: GraphAction, fwd: bool) -> ActionIndex:
         if action.action is GraphActionType.Stop:
             col = 0
             type_idx = self.action_type_order.index(action.action)
@@ -115,7 +115,7 @@ class AutoregressiveSeqBuildingContext(GraphBuildingEnvContext):
             raise ValueError(action)
         return ActionIndex(action_type=type_idx, row_idx=0, col_idx=int(col))
 
-    def graph_to_Data(self, g: Graph):
+    def graph_to_Data(self, g: Graph, traj_len: int):
         s: Seq = g  # type: ignore
         return torch.tensor([self.bos_token] + s.seq, dtype=torch.long)
 

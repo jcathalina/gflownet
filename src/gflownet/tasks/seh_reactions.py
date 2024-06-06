@@ -15,7 +15,6 @@ from gflownet.config import Config, init_empty
 from gflownet.envs.synthesis_building_env import ReactionTemplateEnvContext, ReactionTemplateEnv
 from gflownet.models import bengio2021flow
 from gflownet.online_trainer import StandardOnlineTrainer
-from gflownet.trainer import FlatRewards, GFNTask, RewardScalar
 from gflownet.utils.misc import get_worker_device
 from gflownet.utils.conditioning import TemperatureConditional
 from gflownet.utils.transforms import to_logreward
@@ -35,19 +34,18 @@ class SEHReactionTask(GFNTask):
     def __init__(
         self,
         cfg: Config,
-        rng: np.random.Generator = None,
         wrap_model: Callable[[nn.Module], nn.Module] = None,
     ):
         self._wrap_model = wrap_model
-        self.rng = rng
         self.cfg = cfg
         self.models = self._load_task_models()
-        self.temperature_conditional = TemperatureConditional(cfg, rng)
+        self.temperature_conditional = TemperatureConditional(cfg)
         self.num_cond_dim = self.temperature_conditional.encoding_size()
 
     def _load_task_models(self):
         model = bengio2021flow.load_original_model()
-        model, self.device = self._wrap_model(model, send_to_device=True)
+        model.to(get_worker_device())
+        model = self._wrap_model(model)
         return {"seh": model}
 
     def sample_conditional_information(self, n: int, train_it: int, final: bool = False) -> Dict[str, Tensor]:
@@ -55,7 +53,7 @@ class SEHReactionTask(GFNTask):
             cfg = self.cfg
             cfg.cond.temperature.sample_dist = "constant"
             cfg.cond.temperature.dist_params = [64.0]
-            self.temperature_conditional = TemperatureConditional(cfg, self.rng)
+            self.temperature_conditional = TemperatureConditional(cfg)
         return self.temperature_conditional.sample(n)
 
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], flat_reward: ObjectProperties) -> LogScalar:
@@ -93,8 +91,7 @@ class SEHReactionTrainer(StandardOnlineTrainer):
         cfg.opt.lr_decay = 20_000
         cfg.opt.clip_grad_type = "norm"
         cfg.opt.clip_grad_param = 10
-        cfg.algo.global_batch_size = 64
-        cfg.algo.offline_ratio = 0
+        cfg.algo.num_from_policy = 64
         cfg.model.num_emb = 128
         cfg.model.num_layers = 4
 
@@ -104,7 +101,8 @@ class SEHReactionTrainer(StandardOnlineTrainer):
         cfg.algo.illegal_action_logreward = -75
         cfg.algo.train_random_action_prob = 0.0
         cfg.algo.valid_random_action_prob = 0.0
-        cfg.algo.valid_offline_ratio = 0
+        cfg.algo.valid_num_from_policy = 64
+        cfg.num_validation_gen_steps = 10
         cfg.algo.tb.epsilon = None
         cfg.algo.tb.bootstrap_own_reward = False
         cfg.algo.tb.Z_learning_rate = 1e-3
@@ -119,7 +117,6 @@ class SEHReactionTrainer(StandardOnlineTrainer):
     def setup_task(self):
         self.task = SEHReactionTask(
             cfg=self.cfg,
-            rng=self.rng,
             wrap_model=self._wrap_for_mp,
         )
 
@@ -152,7 +149,6 @@ def main():
     config.opt.learning_rate = 1e-4
     config.opt.lr_decay = 20_000
     config.algo.sampling_tau = 0.99 
-    config.algo.offline_ratio = 0.0
     config.algo.max_len = 5
     config.cond.temperature.sample_dist = "constant"
     config.cond.temperature.dist_params = [64.0]

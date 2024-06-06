@@ -125,6 +125,7 @@ class GFNTrainer:
         self.setup_data()
         self.setup_task()
         self.setup_env_context()
+        self.setup_sampler()
         self.setup_algo()
         self.setup_model()
 

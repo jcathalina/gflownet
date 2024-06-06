@@ -100,12 +100,12 @@ class FlowMatching(TrajectoryBalance):  # TODO: FM inherits from TB but we could
         # convert actions to ActionIndex
         parent_actions = [pact for parent in parents for pact, pstate in parent]
         parent_actionidxs = [
-            self.ctx.GraphAction_to_ActionIndex(gdata, a) for gdata, a in zip(parent_graphs, parent_actions)
+            self.ctx.GraphAction_to_ActionIndex(gdata, a, fwd=True) for gdata, a in zip(parent_graphs, parent_actions)
         ]
         # convert state to Data
         state_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"][1:]]
         terminal_actions = [
-            self.ctx.GraphAction_to_ActionIndex(self.ctx.graph_to_Data(tj["traj"][-1][0]), tj["traj"][-1][1])
+            self.ctx.GraphAction_to_ActionIndex(self.ctx.graph_to_Data(tj["traj"][-1][0]), tj["traj"][-1][1], fwd=True)
             for tj in trajs
         ]
 

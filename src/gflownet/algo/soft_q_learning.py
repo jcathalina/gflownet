@@ -109,7 +109,7 @@ class SoftQLearning:
         """
         torch_graphs = [self.ctx.graph_to_Data(i[0]) for tj in trajs for i in tj["traj"]]
         actions = [
-            self.ctx.GraphAction_to_ActionIndex(g, a)
+            self.ctx.GraphAction_to_ActionIndex(g, a, fwd=True)
             for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
         ]
         batch = self.ctx.collate(torch_graphs)
