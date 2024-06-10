@@ -102,16 +102,16 @@ class ActionIndex(NamedTuple):
     """
 
     action_type: int  # Index of the action type according to GraphActionType
-    # Molecular graph env-specific indices
-    row_idx: Optional[int] = None  # Index of the element the action applies to (e.g. node or edge)
-    col_idx: Optional[int] = None  # Index of the action variant (e.g. which attribute to set)
-    # Synthesis env-specific indices
-    rxn_idx: Optional[int] = None  # Index of the reaction
-    bb_idx: Optional[int] = None  # Index of the building block
+    # In a mol graph env, this is the index of the element the action applies to (e.g. node or edge)  
+    # In a synthesis env, this is the index of the reaction:  
+    row_idx: Optional[int] = 0
+    # In a mol graph env, this is the index of the action variant (e.g. which attribute to set)
+    # In a synthesis env, this is the index of the bb: 
+    col_idx: Optional[int] = 0
 
 
 class GraphAction:
-    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None, rxn=None, bb=None):
+    def __init__(self, action: GraphActionType, source=None, target=None, value=None, attr=None, rxn=0, bb=0):
         """A single graph-building action
 
         Parameters

@@ -303,7 +303,6 @@ class TrajectoryBalance(GFNAlgorithm):
             ]
         else:
             torch_graphs = [self.ctx.graph_to_Data(i[0], traj_len=k) for tj in trajs for k, i in enumerate(tj["traj"])]
-            print("GraphActions ", [i[1] for tj in trajs for i in tj["traj"]])
             actions = [
                 self.ctx.GraphAction_to_ActionIndex(g, a, fwd=True)
                 for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
@@ -311,7 +310,6 @@ class TrajectoryBalance(GFNAlgorithm):
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.log_p_B = torch.cat([i["bck_logprobs"] for i in trajs], 0)
-        print(actions)
         batch.actions = torch.tensor(actions)
         if self.cfg.do_parameterize_p_b:
             batch.bck_actions = torch.tensor(

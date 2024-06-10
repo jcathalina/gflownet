@@ -84,7 +84,7 @@ class SynthesisSampler(Sampler):
                     is_random_action[b][:, None] * torch.ones_like(i) * 100 + i * (1 - is_random_action[b][:, None])
                     for i, b in zip(fwd_cat.logits, fwd_cat.batch)
                 ]
-            actions = fwd_cat.sample(traj_len=t, nx_graphs=nx_graphs, model=model)
+            actions = fwd_cat.sample(nx_graphs=nx_graphs, model=model)
             graph_actions = [self.ctx.ActionIndex_to_GraphAction(g, a, fwd=True) for g, a in zip(torch_graphs, actions)]
             # Step each trajectory, and accumulate statistics
             for i, j in zip(not_done(range(n)), range(n)):
@@ -97,19 +97,7 @@ class SynthesisSampler(Sampler):
                 else:  # If not done, step the self.environment
                     gp = graphs[i]
                     gp = self.env.step(graphs[i], graph_actions[j])
-                    if graph_actions[j].action is GraphActionType.AddFirstReactant:
-                        b_a_idx = ActionIndex(action_type=2, rxn_idx=None, bb_idx=None)
-                    elif graph_actions[j].action is GraphActionType.ReactUni:
-                        b_a_idx = ActionIndex(action_type=0, rxn_idx=graph_actions[j].rxn, bb_idx=None)
-                    else:
-                        b_a_idx = ActionIndex(action_type=1, rxn_idx=graph_actions[j].rxn, bb_idx=0)
-                        b_a = self.ctx.ActionIndex_to_GraphAction(gp, b_a_idx, fwd=False)
-                        _, both_are_bb = self.env.backward_step(gp, b_a)
-                        if both_are_bb:
-                            b_a_idx = ActionIndex(action_type=1, rxn_idx=graph_actions[j].rxn, bb_idx=1)
-                        else:
-                            b_a_idx = ActionIndex(action_type=1, rxn_idx=graph_actions[j].rxn, bb_idx=0)
-                    bck_a[i].append(self.ctx.ActionIndex_to_GraphAction(gp, b_a_idx, fwd=False))
+                    bck_a[i].append(self.env.reverse(gp, graph_actions[j]))
                     if t == self.max_len - 1:
                         done[i] = True
                     n_back = self.env.count_backward_transitions(gp)
