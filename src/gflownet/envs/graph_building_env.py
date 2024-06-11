@@ -10,6 +10,7 @@ import networkx as nx
 import numpy as np
 import torch
 import torch_geometric.data as gd
+import torch.nn as nn
 from networkx.algorithms.isomorphism import is_isomorphic
 from torch_scatter import scatter, scatter_max
 
@@ -493,6 +494,7 @@ class GraphActionCategorical:
         deduplicate_edge_index=True,
         action_masks: List[torch.Tensor] = None,
         slice_dict: Optional[dict[str, torch.Tensor]] = None,
+        fwd: bool = True
     ):
         """A multi-type Categorical compatible with generating structured actions.
 
@@ -832,7 +834,14 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[ActionIndex], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
+    def log_prob(
+            self, 
+            actions: List[ActionIndex], 
+            logprobs: torch.Tensor = None, 
+            batch: torch.Tensor = None, 
+            nx_graphs: Optional[List[nx.Graph]] = None,
+            model: Optional[nn.Module] = None, 
+        ):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 

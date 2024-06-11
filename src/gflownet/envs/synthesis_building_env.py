@@ -249,6 +249,8 @@ class ReactionTemplateEnvContext(GraphBuildingEnvContext):
             return np.ones(masks_len[action_type]) # no masks for AddFirstReactant
         elif traj_len == 1 and action_type == GraphActionType.Stop:
             return np.zeros(masks_len[action_type])
+        elif traj_len != 1 and action_type == GraphActionType.Stop:
+            return np.ones(masks_len[action_type])
         else:
             mol = self.get_mol(smi)
             Chem.SanitizeMol(mol)
@@ -892,6 +894,7 @@ class ActionCategorical:
         expanded_input = torch.cat((emb, rxn_features), dim=-1)
         return model.mlps[GraphActionType.AddReactant.cname](expanded_input)
 
+    # TODO arguments differ from GrapbActionCategorical
     def sample(self, nx_graphs: List[nx.Graph] = None, model: nn.Module = None) -> List[ActionIndex]:
         """Samples from the categorical distribution"""
         u = [torch.rand(i.shape, device=self.dev) for i in self.primary_logits]
@@ -922,18 +925,17 @@ class ActionCategorical:
             # else: # TODO Action type BckReactBi
         return argmax
 
-
+    # TODO arguments differ from GrapbActionCategorical
     def log_prob(
         self,
         actions: List[ActionIndex],
-        traj_idcs: Optional[torch.tensor] = None,
         nx_graphs: Optional[List[nx.Graph]] = None,
         model: Optional[nn.Module] = None,
     ):                                                   
         """Access the log-probability of actions"""
         # Initialize a tensor to hold the log probabilities for each action
         if self.fwd:
-            for i, (action, traj_idx) in enumerate(zip(actions, traj_idcs)):
+            for i, action in enumerate(actions):
                 action_type, row_idx, col_idx = action.action_type, action.row_idx, action.col_idx
                 # Instances where we've changed the logits values during sampling:
                 if (

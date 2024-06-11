@@ -303,6 +303,7 @@ class TrajectoryBalance(GFNAlgorithm):
             ]
         else:
             torch_graphs = [self.ctx.graph_to_Data(i[0], traj_len=k) for tj in trajs for k, i in enumerate(tj["traj"])]
+            nx_graphs = [i[0] for tj in trajs for i in tj["traj"]]
             actions = [
                 self.ctx.GraphAction_to_ActionIndex(g, a, fwd=True)
                 for g, a in zip(torch_graphs, [i[1] for tj in trajs for i in tj["traj"]])
@@ -310,14 +311,20 @@ class TrajectoryBalance(GFNAlgorithm):
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
         batch.log_p_B = torch.cat([i["bck_logprobs"] for i in trajs], 0)
-        batch.actions = torch.tensor(actions)
+        # batch.actions = torch.tensor(actions)
+        batch.actions = actions
+        batch.nx_graphs = nx_graphs
         if self.cfg.do_parameterize_p_b:
-            batch.bck_actions = torch.tensor(
-                [
+            # batch.bck_actions = torch.tensor(
+            #     [
+            #         self.ctx.GraphAction_to_ActionIndex(g, a, fwd=False)
+            #         for g, a in zip(torch_graphs, [i for tj in trajs for i in tj["bck_a"]])
+            #     ]
+            # )
+            batch.bck_actions = [
                     self.ctx.GraphAction_to_ActionIndex(g, a, fwd=False)
                     for g, a in zip(torch_graphs, [i for tj in trajs for i in tj["bck_a"]])
                 ]
-            )
             batch.is_sink = torch.tensor(sum([i["is_sink"] for i in trajs], []))
         batch.log_rewards = log_rewards
         batch.cond_info = cond_info
@@ -442,7 +449,7 @@ class TrajectoryBalance(GFNAlgorithm):
                 log_p_B = bck_p.clamp(1e-30).log()
         else:
             # Else just naively take the logprob of the actions we took
-            log_p_F = fwd_cat.log_prob(batch.actions)
+            log_p_F = fwd_cat.log_prob(actions=batch.actions, nx_graphs=batch.nx_graphs, model=model)
             if self.cfg.do_parameterize_p_b:
                 log_p_B = bck_cat.log_prob(batch.bck_actions)
 

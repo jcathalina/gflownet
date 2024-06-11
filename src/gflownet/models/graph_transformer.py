@@ -434,14 +434,15 @@ class GraphTransformerGFN(nn.Module):
         else:
             raise RuntimeError("AddReactant hook not registered.")
 
-    def _make_cat(self, g: gd.Batch, emb: Dict[str, Tensor], action_types: list[GraphActionType]):
+    def _make_cat(self, g: gd.Batch, emb: Dict[str, Tensor], action_types: list[GraphActionType], fwd: bool):
         return ActionCategorical(
             g,
-            emb,
+            emb["graph"],
             raw_logits=[self.mlps[t.cname](emb[self._action_type_to_graph_part[t]]) for t in action_types],
             keys=[self._action_type_to_key[t] for t in action_types if self._action_type_to_key[t] is not None],
             action_masks=[action_type_to_mask(t, g) for t in action_types],
             types=action_types,
+            fwd=fwd
         )
 
     def forward(self, g: gd.Batch, cond: Optional[torch.Tensor]):
@@ -475,10 +476,10 @@ class GraphTransformerGFN(nn.Module):
         }
 
         graph_out = self.emb2graph_out(graph_embeddings)
-        action_type_order = [a for a in self.action_type_order if a not in [GraphActionType.AddReactant]]
-        fwd_cat = self._make_cat(g, emb, action_type_order)
+        action_type_order = [a for a in self.action_type_order if a not in [GraphActionType.AddReactant]] # TODO this should not be hardcoded
+        fwd_cat = self._make_cat(g, emb, action_type_order, fwd=True)
         if self.do_bck:
-            bck_cat = self._make_cat(g, emb, self.bck_action_type_order)
+            bck_cat = self._make_cat(g, emb, self.bck_action_type_order, fwd=False) # TODO fwd flag not originally used in GraphActionCategorical
             return fwd_cat, bck_cat, graph_out
         return fwd_cat, graph_out
 
