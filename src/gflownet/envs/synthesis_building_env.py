@@ -722,7 +722,6 @@ class ActionCategorical:
         # For fwd actions, there is a hierarchy of action types: AddFirstReactant, Stop, UniReact, BiReact to be sampled first, then AddReactant
         # The logits are in the order: Stop, UniReact, BiReact, AddReactant
 
-
         self.action_hierarchy = {
             "fwd": {
                 "primary": types,
@@ -871,9 +870,8 @@ class ActionCategorical:
             log_probs.append(torch.cat(corr_logits_secondary, dim=1) - log_Z_secondary.view(-1, 1))
         return log_probs
 
-    def add_reactant_hook(self, model, rxn_id, emb, g):
-        """
-        The hook function to be called for the AddReactant action.
+    def get_addreactant_logits(self, model, rxn_id, emb, g):
+        """Function to be called for the AddReactant action.
         Parameters
         model : GraphTransformerReactionsGFN
             The model instance.
@@ -909,8 +907,7 @@ class ActionCategorical:
                 argmax[i] = ActionIndex(action_type=t[0], row_idx=t[1])
             elif self.ctx.aidx_to_action_type(t, fwd=self.fwd) == GraphActionType.ReactBi:  # sample reactant
                 masks = torch.tensor(self.ctx.create_masks_for_bb_from_precomputed(nx_graphs[i], t[1]), device=self.dev)
-                model.register_add_reactant_hook(self.add_reactant_hook)
-                add_reactant_logits = model.call_add_reactant_hook(t[1], self.graph_embeddings[i], self.graphs[i])
+                add_reactant_logits = self.get_addreactant_logits(model, t[1], self.graph_embeddings[i], self.graphs[i])
                 masked_logits = torch.zeros_like(add_reactant_logits) - torch.inf
                 masked_logits[masks.bool()] = add_reactant_logits[masks.bool()]
                 device = masked_logits.device
@@ -944,10 +941,7 @@ class ActionCategorical:
                     masks = torch.tensor(
                         self.ctx.create_masks_for_bb_from_precomputed(nx_graphs[i], row_idx), device=self.dev
                     )
-                    model.register_add_reactant_hook(self.add_reactant_hook)
-                    add_reactant_logits = model.call_add_reactant_hook(
-                        row_idx, self.graph_embeddings[i], self.graphs[i]
-                    )
+                    add_reactant_logits = self.get_addreactant_logits(model, row_idx, self.graph_embeddings[i], self.graphs[i])
                     masked_logits = torch.zeros_like(add_reactant_logits) - 1000.0
                     masked_logits[masks.bool()] = add_reactant_logits[masks.bool()]
                     self.secondary_logits[0][i] = masked_logits

@@ -12,7 +12,7 @@ from gflownet.algo.flow_matching import FlowMatching
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.replay_buffer import ReplayBuffer
-from gflownet.models.graph_transformer import GraphTransformerGFN
+from gflownet.models.graph_transformer import GraphTransformerGFN, GraphTransformerSynGFN
 
 from .trainer import GFNTrainer
 
@@ -27,7 +27,7 @@ def model_grad_norm(model):
 
 class StandardOnlineTrainer(GFNTrainer):
     def setup_model(self):
-        self.model = GraphTransformerGFN(
+        self.model = GraphTransformerSynGFN(
             self.ctx,
             self.cfg,
             do_bck=self.cfg.algo.tb.do_parameterize_p_b,

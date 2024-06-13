@@ -71,6 +71,7 @@ class SynthesisSampler(Sampler):
             torch_graphs = [self.ctx.graph_to_Data(i, traj_len=t) for i in not_done(graphs)]
             nx_graphs = [g for g in not_done(graphs)]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
+            # TODO change cond_info for every state depending on bi-react or no bi-react
             fwd_cat, *_, _ = model(
                 self.ctx.collate(torch_graphs).to(dev), cond_info[not_done_mask]
             )
