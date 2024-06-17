@@ -65,8 +65,10 @@ class QM9MOOTaskConfig(StrictDataClass):
 @dataclass
 class SEHReactionTaskConfig:
     templates_filename: str = "hb_edited.txt"
-    building_blocks_filename: str = "short_building_blocks_6k.txt"
-    precomputed_bb_masks_filename: str = "precomputed_bb_masks_6k.pkl"
+    building_blocks_filename: str = "enamine_bb_270k_HB_matching_short_subsampled_50000.txt"
+    precomputed_bb_masks_filename: str = "precomputed_bb_masks_50k.pkl"
+    # building_blocks_filename: str = "short_building_blocks_6k.txt"
+    # precomputed_bb_masks_filename: str = "precomputed_bb_masks_6k.pkl"
 
 
 @dataclass
