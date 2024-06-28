@@ -139,7 +139,7 @@ class GraphAction:
         self.bb: Optional[int] = bb
 
     def __repr__(self):
-        attrs = ", ".join(str(i) for i in [self.source, self.target, self.attr, self.value] if i is not None)
+        attrs = ", ".join(str(i) for i in [self.source, self.target, self.attr, self.value, self.rxn, self.bb] if i is not None)
         return f"<{self.action}, {attrs}>"
 
 

@@ -515,6 +515,8 @@ class ReactionTemplateEnv:
             reaction = self.ctx.bimolecular_reactions[action.rxn]
             reactant2 = self.ctx.get_mol(self.ctx.building_blocks[action.bb])
             p = reaction.run_reactants((mol, reactant2))
+            if p is None:
+                raise ValueError(f"Reaction {reaction.template} failed with reactants {Chem.MolToSmiles(mol)}, {Chem.MolToSmiles(reactant2)}")
             return p
 
     def backward_step(self, smi: Union[str, Chem.Mol, Graph], action: GraphAction) -> Chem.Mol:

@@ -92,19 +92,20 @@ class Reaction:
 
         if len(ps) == 0:
             raise ValueError("Reaction did not yield any products.")
-
-        if keep_main:
-            p = ps[0][0]
-            try:
-                Chem.SanitizeMol(p)
-            except (Chem.rdchem.KekulizeException, Chem.rdchem.AtomValenceException) as e:
-                warnings.warn(
-                    f"{e}: Reaction {self.template}, reactants {Chem.MolToSmiles(reactants[0])}, {Chem.MolToSmiles(reactants[1])}"
-                )
-            p = Chem.RemoveHs(p)
-            return p
         else:
-            return ps
+            for i in range(len(ps)):
+                # return the first product that when canonicalized does not return None
+                p = ps[i][0]
+                if Chem.MolFromSmiles(Chem.MolToSmiles(p)) is not None:
+                    try:   
+                        Chem.SanitizeMol(p)
+                    except (Chem.rdchem.KekulizeException, Chem.rdchem.AtomValenceException) as e:
+                        warnings.warn(
+                            f"{e}: Reaction {self.template}, reactants {Chem.MolToSmiles(reactants[0])}, {Chem.MolToSmiles(reactants[1])}"
+                        )
+                    p = Chem.RemoveHs(p)
+                    return p
+        return ps[0][0]
 
     def run_reverse_reactants(
         self, product: Tuple[Chem.Mol], rxn: rdChemReactions = None, keep_main: bool = True
@@ -129,12 +130,22 @@ class Reaction:
             else:
                 return rs
         elif self.num_reactants == 2:
-            try:
-                rs = list(rxn.RunReactants(product)[0])
-            except IndexError:  # Because reaction SMARTS and product can be either kekulized or not
+            rs = rxn.RunReactants(product)
+            # if rs is empty, try with kekulized product
+            if len(rs) == 0:
                 product = Chem.MolFromSmiles(Chem.MolToSmiles(product[0]))
                 Chem.Kekulize(product, clearAromaticFlags=True)
-                rs = list(rxn.RunReactants((product,))[0])
+                rs = rxn.RunReactants((product,))
+            # if rs is still empty, raise error
+            if len(rs) == 0:
+                raise ValueError(f"Reaction did not yield any products. Product: {Chem.MolToSmiles(product)}, Template: {self.template}")
+            elif len(rs) == 1:
+                rs = list(rs[0])
+            else:
+                if Chem.MolFromSmiles(Chem.MolToSmiles(rs[0][0])) is not None:
+                    rs = list(rs[0])
+                else:
+                    rs = list(rs[1])
             reactants_smi = [Chem.MolToSmiles(r) for r in rs]
             for i, s in enumerate(reactants_smi):
                 if "[CH]" in s:
