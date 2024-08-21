@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 
-def create_logger(name="logger", loglevel=logging.INFO, logfile=None, streamHandle=True):
+def create_logger(name="gflownet", loglevel=logging.INFO, logfile=None, streamHandle=True):
     logger = logging.getLogger(name)
     logger.setLevel(loglevel)
     while len([logger.removeHandler(i) for i in logger.handlers]):

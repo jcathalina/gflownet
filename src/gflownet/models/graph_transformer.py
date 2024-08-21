@@ -240,6 +240,7 @@ class GraphTransformerGFN(nn.Module):
         self.emb2graph_out = mlp(num_glob_final, num_emb, num_graph_out, cfg.model.graph_transformer.num_mlp_layers)
         # TODO: flag for this
         self._logZ = mlp(max(1, env_ctx.num_cond_dim), num_emb * 2, 1, 2)
+        self.logit_scaler = mlp(max(1, env_ctx.num_cond_dim), num_emb * 2, 1, 2)
 
     def logZ(self, cond_info: Optional[torch.Tensor]):
         if cond_info is None:
@@ -247,13 +248,16 @@ class GraphTransformerGFN(nn.Module):
         return self._logZ(cond_info)
 
     def _make_cat(self, g: gd.Batch, emb: Dict[str, Tensor], action_types: list[GraphActionType]):
-        return GraphActionCategorical(
+        cat = GraphActionCategorical(
             g,
             raw_logits=[self.mlps[t.cname](emb[self._action_type_to_graph_part[t]]) for t in action_types],
             keys=[self._action_type_to_key[t] for t in action_types],
             action_masks=[action_type_to_mask(t, g) for t in action_types],
             types=action_types,
         )
+        sc = self.logit_scaler(g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
+        cat.logits = [l * sc[b] for l, b in zip(cat.raw_logits, cat.batch)]  # Setting .logits masks them
+        return cat
 
     def forward(self, g: gd.Batch):
         node_embeddings, graph_embeddings = self.transf(g)

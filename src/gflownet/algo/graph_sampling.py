@@ -256,8 +256,9 @@ class GraphSampler:
             torch_graphs = [self.ctx.graph_to_Data(graphs[i]) for i in not_done(range(n))]
             not_done_mask = torch.tensor(done, device=dev).logical_not()
             if model is not None:
-                ci = cond_info[not_done_mask] if cond_info is not None else None
-                _, bck_cat, *_ = model(self.ctx.collate(torch_graphs).to(dev), ci)
+                gbatch = self.ctx.collate(torch_graphs).to(dev)
+                gbatch.cond_info = cond_info[not_done_mask] if cond_info is not None else None
+                _, bck_cat, *_ = model(gbatch)
             else:
                 gbatch = self.ctx.collate(torch_graphs)
                 action_types = self.ctx.bck_action_type_order

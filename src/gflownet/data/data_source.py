@@ -99,6 +99,7 @@ class DataSource(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 # TODO: in the cond info refactor, pass the whole thing instead of just the encoding
                 trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info["encoding"], p)
+                self.mark_all(trajs, source='sample')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -128,6 +129,7 @@ class DataSource(IterableDataset):
                 cond_info = self.task.sample_conditional_information(n_this_time, t)
                 # TODO: in the cond info refactor, pass the whole thing instead of just the encoding
                 trajs = self.algo.create_training_data_from_own_samples(model, n_this_time, cond_info["encoding"], p)
+                self.mark_all(trajs, source='sample')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -143,6 +145,7 @@ class DataSource(IterableDataset):
         def iterator():
             while self.active:
                 trajs, *_ = self.replay_buffer.sample(num_samples)
+                self.mark_all(trajs, source='replay')
                 self.relabel_in_hindsight(trajs)  # This is a no-op if the hindsight ratio is 0
                 yield trajs, {}
 
@@ -157,6 +160,7 @@ class DataSource(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
                 trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info["encoding"], p)
+                self.mark_all(trajs, source='dataset')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
                 self.compute_log_rewards(trajs)
@@ -175,6 +179,7 @@ class DataSource(IterableDataset):
                 # it and the state of the program (e.g. validation mode)
                 cond_info = self.task.encode_conditional_information(torch.stack([data[i] for i in idcs]))
                 trajs = self.algo.create_training_data_from_own_samples(model, len(idcs), cond_info["encoding"], p)
+                self.mark_all(trajs, source='dataset')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -197,6 +202,7 @@ class DataSource(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
                 trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info["encoding"], p)
+                self.mark_all(trajs, source='dataset')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
                 self.compute_log_rewards(trajs)
@@ -204,6 +210,10 @@ class DataSource(IterableDataset):
 
         self.iterators.append(iterator)
         return self
+
+    def mark_all(self, trajs, **kw):
+        for t in trajs:
+            t.update(kw)
 
     def call_sampling_hooks(self, trajs):
         batch_info = {}
@@ -222,8 +232,7 @@ class DataSource(IterableDataset):
         ci = torch.stack([t["cond_info"]["encoding"] for t in trajs])
         log_rewards = torch.stack([t["log_reward"] for t in trajs])
         batch = self.algo.construct_batch(trajs, ci, log_rewards)
-        batch.num_online = sum(t.get("is_online", 0) for t in trajs)
-        batch.num_offline = len(trajs) - batch.num_online
+        batch.sources = [t.get("source", "unknown") for t in trajs]
         batch.extra_info = batch_info
         if "preferences" in trajs[0]["cond_info"].keys():
             batch.preferences = torch.stack([t["cond_info"]["preferences"] for t in trajs])

@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.utils.tensorboard
 import torch_geometric.data as gd
@@ -72,7 +73,7 @@ class GFNTrainer:
         )  # make sure the config is a Config object, and not the Config class itself
         self.cfg: Config = OmegaConf.merge(self.default_cfg, config)
 
-        self.device = torch.device(self.cfg.device)
+        self.device = torch.device(self.cfg.rank or self.cfg.device)
         set_main_process_device(self.device)
         # Print the loss every `self.print_every` iterations
         self.print_every = self.cfg.print_every
@@ -81,6 +82,9 @@ class GFNTrainer:
         self.valid_sampling_hooks: List[Callable] = []
         # Will check if parameters are finite at every iteration (can be costly)
         self._validate_parameters = False
+
+        self.world_size = self.cfg.world_size
+        self.rank = self.cfg.rank
 
         self.setup()
 
@@ -219,6 +223,7 @@ class GFNTrainer:
         tick = time.time()
         self.model.train()
         try:
+            self.model.lock.acquire()
             loss = info = None
             loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
@@ -227,6 +232,7 @@ class GFNTrainer:
             self.algo.step()  # This also isn't used anywhere?
             if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
                 raise ValueError("parameters are not finite")
+            self.model.lock.release()
         except ValueError as e:
             os.makedirs(self.cfg.log_dir, exist_ok=True)
             torch.save([self.model.state_dict(), batch, loss, info], open(self.cfg.log_dir + "/dump.pkl", "wb"))
@@ -258,6 +264,22 @@ class GFNTrainer:
             batch = batch.to(self.device)
         return batch
 
+    def _send_models_to_device(self):
+        self.model.to(self.device)
+        self.sampling_model.to(self.device)
+        if self.world_size > 1:
+            self.model = DistributedDataParallel(
+                self.model.to(self.rank), 
+                device_ids=[self.rank], 
+                output_device=self.rank
+            )
+            if self.sampling_model is not self.model:
+                self.sampling_model = DistributedDataParallel(
+                    self.sampling_model.to(self.rank),
+                    device_ids=[self.rank],
+                    output_device=self.rank
+                )
+
     def run(self, logger=None):
         """Trains the GFN for `num_training_steps` minibatches, performing
         validation every `validate_every` minibatches.
@@ -266,6 +288,8 @@ class GFNTrainer:
             logger = create_logger(logfile=self.cfg.log_dir + "/train.log")
         self.model.to(self.device)
         self.sampling_model.to(self.device)
+        import threading
+        self.model.lock = threading.Lock()  # This is created here because you can't pickle a lock, and model is deepcopied -> sampling_model
         epoch_length = max(len(self.training_data), 1)
         valid_freq = self.cfg.validate_every
         # If checkpoint_every is not specified, checkpoint at every validation epoch
@@ -294,12 +318,22 @@ class GFNTrainer:
                     f"iteration {it} : warming up replay buffer {len(self.replay_buffer)}/{self.replay_buffer.warmup}"
                 )
                 continue
+
             info = self.train_batch(batch, epoch_idx, batch_idx, it)
             info["time_spent"] = time.time() - start_time
             start_time = time.time()
-            self.log(info, it, "train")
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
+
+            if self.world_size > 1:
+                all_info_vals = torch.zeros(len(info)).to(self.rank)
+                for i, k in enumerate(sorted(info.keys())):
+                    all_info_vals[i] = info[k]
+                dist.all_reduce(all_info_vals, op=dist.ReduceOp.SUM)
+                for i, k in enumerate(sorted(info.keys())):
+                    info[k] = all_info_vals[i].item() / self.world_size
+            if self.rank == 0:
+                self.log(info, it, 'train')
 
             if valid_freq > 0 and it % valid_freq == 0:
                 for batch in valid_dl:
@@ -346,7 +380,7 @@ class GFNTrainer:
             del final_dl
 
     def terminate(self):
-        logger = logging.getLogger("logger")
+        logger = logging.getLogger("gflownet")
         for handler in logger.handlers:
             handler.close()
 

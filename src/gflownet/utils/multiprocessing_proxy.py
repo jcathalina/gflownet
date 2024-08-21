@@ -8,6 +8,8 @@ from pickle import Pickler, Unpickler, UnpicklingError
 import torch
 import torch.multiprocessing as mp
 
+DO_PIN_BUFFERS = False  # So actually, we don't really need to pin buffers, but it's a good idea in some cases.
+                        # The shared memory is already a good step.
 
 class SharedPinnedBuffer:
     def __init__(self, size):
@@ -17,15 +19,15 @@ class SharedPinnedBuffer:
         self.lock = mp.Lock()
         self.do_unreg = False
 
-        if not self.buffer.is_pinned():
+        if DO_PIN_BUFFERS and not self.buffer.is_pinned():
             # Sometimes torch will create an already pinned (page aligned) buffer, so we don't need to
             # pin it again; doing so will raise a CUDA error
             cudart = torch.cuda.cudart()
             r = cudart.cudaHostRegister(self.buffer.data_ptr(), self.buffer.numel() * self.buffer.element_size(), 0)
             assert r == 0
             self.do_unreg = True  # But then we need to unregister it later
+            assert self.buffer.is_pinned()
         assert self.buffer.is_shared()
-        assert self.buffer.is_pinned()
 
     def __del__(self):
         if torch.utils.data.get_worker_info() is None:
@@ -265,6 +267,8 @@ class MPObjectProxy:
                     break
                 timeouts = 0
                 attr, args, kwargs = r
+                if hasattr(self.obj, 'lock'):
+                    f.lock.acquire()
                 f = getattr(self.obj, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
                 kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
@@ -287,6 +291,8 @@ class MPObjectProxy:
                 else:
                     msg = self.to_cpu(result)
                 self.out_queues[qi].put(self.encode(msg))
+                if hasattr(self.obj, 'lock'):
+                    f.lock.release()
 
     def terminate(self):
         self.stop.set()

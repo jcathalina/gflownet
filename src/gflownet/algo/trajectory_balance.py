@@ -583,8 +583,6 @@ class TrajectoryBalance(GFNAlgorithm):
         tb_loss = traj_losses.mean()
         loss = tb_loss + reward_loss + self.cfg.n_loss_multiplier * n_loss
         info = {
-            "offline_loss": traj_losses[: batch.num_offline].mean() if batch.num_offline > 0 else 0,
-            "online_loss": traj_losses[batch.num_offline :].mean() if batch.num_online > 0 else 0,
             "reward_loss": reward_loss,
             "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
             "invalid_logprob": (invalid_mask * traj_log_p_F).sum() / (invalid_mask.sum() + 1e-4),
@@ -596,7 +594,12 @@ class TrajectoryBalance(GFNAlgorithm):
             "tb_loss": tb_loss.item(),
             "batch_entropy": -traj_log_p_F.mean(),
             "traj_lens": batch.traj_lens.float().mean(),
+            'avg_log_reward': clip_log_R.mean(),
         }
+        sources = set(batch.sources)
+        if len(sources) > 1:
+            for source in sources:
+                info[f'{source}_loss'] = traj_losses[torch.as_tensor([i == source for i in batch.sources])].mean().item()
         if self.ctx.has_n() and self.cfg.do_predict_n:
             info["n_loss_pred"] = scatter(
                 (log_n_preds - batch.log_ns) ** 2, batch_idx, dim=0, dim_size=num_trajs, reduce="sum"
@@ -609,6 +612,8 @@ class TrajectoryBalance(GFNAlgorithm):
                 d[final_graph_idx] = 0
                 info["n_loss_maxent"] = scatter(d, batch_idx, dim=0, dim_size=num_trajs, reduce="sum").mean()
 
+        if not torch.isfinite(loss):
+            import pdb; pdb.set_trace()
         return loss, info
 
     def analytical_maxent_backward(self, batch, first_graph_idx):

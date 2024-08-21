@@ -107,6 +107,8 @@ class Config(StrictDataClass):
     git_hash: Optional[str] = None
     overwrite_existing_exp: bool = False
     mp_buffer_size: Optional[int] = None
+    world_size: int = 1
+    rank: int = 0
     algo: AlgoConfig = field(default_factory=AlgoConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     opt: OptimizerConfig = field(default_factory=OptimizerConfig)

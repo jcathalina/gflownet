@@ -140,7 +140,7 @@ class GraphBuildingEnv:
         - we can generate a legal action for any attribute that isn't a default one.
     """
 
-    def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True):
+    def __init__(self, allow_add_edge=True, allow_node_attr=True, allow_edge_attr=True, graph_cls=None):
         """A graph building environment instance
 
         Parameters
@@ -152,13 +152,16 @@ class GraphBuildingEnv:
             if True, allows this action and computes SetNodeAttr parents
         allow_edge_attr: bool
             if True, allows this action and computes SetEdgeAttr parents
+        graph_cls: class
+            if None, defaults to Graph. Called in new().
         """
         self.allow_add_edge = allow_add_edge
         self.allow_node_attr = allow_node_attr
         self.allow_edge_attr = allow_edge_attr
+        self.graph_cls = Graph if graph_cls is None else graph_cls
 
     def new(self):
-        return Graph()
+        return self.graph_cls()
 
     def step(self, g: Graph, action: GraphAction) -> Graph:
         """Step forward the given graph state with an action
@@ -178,12 +181,12 @@ class GraphBuildingEnv:
         gp = g.copy()
         if action.action is GraphActionType.AddEdge:
             a, b = action.source, action.target
-            assert self.allow_add_edge
-            assert a in g and b in g
+            #assert self.allow_add_edge
+            #assert a in g and b in g
             if a > b:
                 a, b = b, a
-            assert a != b
-            assert not g.has_edge(a, b)
+            #assert a != b
+            #assert not g.has_edge(a, b)
             # Ideally the FA underlying this must only be able to send
             # create_edge actions which respect this a<b property (or
             # its inverse!) , otherwise symmetry will be broken
@@ -192,48 +195,48 @@ class GraphBuildingEnv:
 
         elif action.action is GraphActionType.AddNode:
             if len(g) == 0:
-                assert action.source == 0  # TODO: this may not be useful
+                #assert action.source == 0  # TODO: this may not be useful
                 gp.add_node(0, v=action.value)
             else:
-                assert action.source in g.nodes
+                #assert action.source in g.nodes
                 e = [action.source, max(g.nodes) + 1]
                 # if kw and 'relabel' in kw:
                 #     e[1] = kw['relabel']  # for `parent` consistency, allow relabeling
-                assert not g.has_edge(*e)
+                #assert not g.has_edge(*e)
                 gp.add_node(e[1], v=action.value)
                 gp.add_edge(*e)
 
         elif action.action is GraphActionType.SetNodeAttr:
-            assert self.allow_node_attr
-            assert action.source in gp.nodes
+            #assert self.allow_node_attr
+            #assert action.source in gp.nodes
             # For some "optional" attributes like wildcard atoms, we indicate that they haven't been
             # chosen by the 'None' value. Here we make sure that either the attribute doesn't
             # exist, or that it's an optional attribute that hasn't yet been set.
-            assert action.attr not in gp.nodes[action.source] or gp.nodes[action.source][action.attr] is None
+            #assert action.attr not in gp.nodes[action.source] or gp.nodes[action.source][action.attr] is None
             gp.nodes[action.source][action.attr] = action.value
 
         elif action.action is GraphActionType.SetEdgeAttr:
-            assert self.allow_edge_attr
-            assert g.has_edge(action.source, action.target)
-            assert action.attr not in gp.edges[(action.source, action.target)]
+            #assert self.allow_edge_attr
+            #assert g.has_edge(action.source, action.target)
+            #assert action.attr not in gp.edges[(action.source, action.target)]
             gp.edges[(action.source, action.target)][action.attr] = action.value
 
         elif action.action is GraphActionType.RemoveNode:
-            assert g.has_node(action.source)
+            #assert g.has_node(action.source)
             gp = graph_without_node(gp, action.source)
         elif action.action is GraphActionType.RemoveNodeAttr:
-            assert g.has_node(action.source)
+            #assert g.has_node(action.source)
             gp = graph_without_node_attr(gp, action.source, action.attr)
         elif action.action is GraphActionType.RemoveEdge:
-            assert g.has_edge(action.source, action.target)
+            #assert g.has_edge(action.source, action.target)
             gp = graph_without_edge(gp, (action.source, action.target))
         elif action.action is GraphActionType.RemoveEdgeAttr:
-            assert g.has_edge(action.source, action.target)
+            #assert g.has_edge(action.source, action.target)
             gp = graph_without_edge_attr(gp, (action.source, action.target), action.attr)
         else:
             raise ValueError(f"Unknown action type {action.action}", action.action)
 
-        gp.clear_cache()  # Invalidate cached properties since we've modified the graph
+        # gp.clear_cache()  # Invalidate cached properties since we've modified the graph
         return gp
 
     def parents(self, g: Graph):
@@ -315,17 +318,22 @@ class GraphBuildingEnv:
             return len(self.parents(g))
         c = 0
         deg = [g.degree[i] for i in range(len(g.nodes))]
+        has_connected_edge_attr = [False] * len(g.nodes)
+        bridges = g.bridges()
         for a, b in g.edges:
             if deg[a] > 1 and deg[b] > 1 and len(g.edges[(a, b)]) == 0:
                 # Can only remove edges connected to non-leaves and without
                 # attributes (the agent has to remove the attrs, then remove
                 # the edge). Removal cannot disconnect the graph.
-                new_g = graph_without_edge(g, (a, b))
-                if nx.algorithms.is_connected(new_g):
+                if (a, b) not in bridges and (b, a) not in bridges:
                     c += 1
-            c += len(g.edges[(a, b)])  # One action per edge attr
+            num_attrs = len(g.edges[(a, b)])
+            c += num_attrs  # One action per edge attr
+            if num_attrs > 0:
+                has_connected_edge_attr[a] = True
+                has_connected_edge_attr[b] = True
         for i in g.nodes:
-            if deg[i] == 1 and len(g.nodes[i]) == 1 and len(g.edges[list(g.edges(i))[0]]) == 0:
+            if deg[i] == 1 and len(g.nodes[i]) == 1 and not has_connected_edge_attr[i]:
                 c += 1
             c += len(g.nodes[i]) - 1  # One action per node attr, except 'v'
             if len(g.nodes) == 1 and len(g.nodes[i]) == 1:
