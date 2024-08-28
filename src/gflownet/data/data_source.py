@@ -9,8 +9,9 @@ from torch_geometric.data import Batch
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer, detach_and_cpu
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext
+from gflownet.envs.graph_building_env import GraphBuildingEnvContext, GraphActionCategorical, action_type_to_mask
 from gflownet.envs.seq_building_env import SeqBatch
+from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.utils.misc import get_worker_rng
 from gflownet.utils.multiprocessing_proxy import BufferPickler, SharedPinnedBuffer
 
@@ -64,24 +65,63 @@ class DataSource(IterableDataset):
         self.rng = get_worker_rng()
         its = [i() for i in self.iterators]
         self.algo.set_is_eval(self.is_algo_eval)
+        print("New iterator", its)
+        err_tol = 10
         while True:
-            with self.global_step_count_lock:
-                self.current_iter = self.global_step_count.item()
-                self.global_step_count += 1
-            iterator_outputs = [next(i, None) for i in its]
-            if any(i is None for i in iterator_outputs):
-                if not all(i is None for i in iterator_outputs):
-                    warnings.warn("Some iterators are done, but not all. You may be mixing incompatible iterators.")
-                    iterator_outputs = [i for i in iterator_outputs if i is not None]
-                else:
-                    break
-            traj_lists, batch_infos = zip(*iterator_outputs)
-            trajs = sum(traj_lists, [])
-            # Merge all the dicts into one
-            batch_info = {}
-            for d in batch_infos:
-                batch_info.update(d)
-            yield self.create_batch(trajs, batch_info)
+            try:
+                with self.global_step_count_lock:
+                    self.current_iter = self.global_step_count.item()
+                    self.global_step_count += 1
+                iterator_outputs = [next(i, None) for i in its]
+                if any(i is None for i in iterator_outputs):
+                    if not all(i is None for i in iterator_outputs):
+                        warnings.warn("Some iterators are done, but not all. You may be mixing incompatible iterators.")
+                        iterator_outputs = [i for i in iterator_outputs if i is not None]
+                    else:
+                        break
+                traj_lists, batch_infos = zip(*iterator_outputs)
+                trajs = sum(traj_lists, [])
+                # Merge all the dicts into one
+                batch_info = {}
+                for d in batch_infos:
+                    batch_info.update(d)
+                yield self.create_batch(trajs, batch_info)
+            except Exception as e:
+                if 1:
+                    raise e
+                err_tol -= 1
+                if err_tol == 0:
+                    raise e
+                print(f"Error in DataSource: {e} [tol={err_tol}]")
+                # print full traceback
+                import traceback, sys
+                traceback.print_exc()
+                traceback.print_exc(file=sys.stderr)
+                continue
+            err_tol = 10 # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
+
+    def validate_batch(self, batch, trajs):
+        for actions, atypes in [(batch.actions, self.ctx.action_type_order)] + (
+            [(batch.bck_actions, self.ctx.bck_action_type_order)]
+            if hasattr(batch, "bck_actions") and hasattr(self.ctx, "bck_action_type_order")
+            else []
+        ):
+            mask_cat = GraphActionCategorical(
+                batch,
+                [action_type_to_mask(t, batch) for t in atypes],
+                [GraphTransformerGFN.action_type_to_key(t) for t in atypes],
+                [None for _ in atypes],
+            )
+            masked_action_is_used = 1 - mask_cat.log_prob(actions, logprobs=mask_cat.logits, pad_value=1.0)
+            num_trajs = len(trajs)
+            batch_idx = torch.arange(num_trajs, device=batch.x.device).repeat_interleave(batch.traj_lens)
+            first_graph_idx = torch.zeros_like(batch.traj_lens)
+            torch.cumsum(batch.traj_lens[:-1], 0, out=first_graph_idx[1:])
+            if masked_action_is_used.sum() != 0:
+                invalid_idx = masked_action_is_used.argmax().item()
+                traj_idx = batch_idx[invalid_idx].item()
+                timestep = invalid_idx - first_graph_idx[traj_idx].item()
+                raise ValueError("Found an action that was masked out", trajs[traj_idx]["traj"][timestep])
 
     def do_sample_model(self, model, num_from_policy, num_new_replay_samples=None):
         if num_new_replay_samples is not None:
@@ -244,6 +284,7 @@ class DataSource(IterableDataset):
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
         batch.obj_props = torch.stack([t["obj_props"] for t in trajs])
+        self.validate_batch(batch, trajs)
         return self._maybe_put_in_mp_buffer(batch)
 
     def compute_properties(self, trajs, mark_as_online=False):
@@ -280,7 +321,9 @@ class DataSource(IterableDataset):
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:
             for t in trajs:
-                self.replay_buffer.push(t, t["log_reward"], t["obj_props"], t["cond_info"], t["is_valid"])
+                self.replay_buffer.push(t, t["log_reward"], t["obj_props"], t["cond_info"], t["is_valid"],
+                                        unique_obj=self.ctx.get_unique_obj(t["result"]),
+                                        priority=t.get("priority", t['log_reward'].item()))
 
     def set_traj_cond_info(self, trajs, cond_info):
         for i in range(len(trajs)):

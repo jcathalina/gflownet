@@ -3,6 +3,8 @@ import sys
 
 import numpy as np
 import torch
+import torch.distributed
+import torch.utils.data
 
 
 def create_logger(name="gflownet", loglevel=logging.INFO, logfile=None, streamHandle=True):
@@ -32,12 +34,18 @@ _worker_rngs = {}
 _worker_rng_seed = [142857]
 _main_process_device = [torch.device("cpu")]
 
-
-def get_worker_rng():
+def get_this_wid():
     worker_info = torch.utils.data.get_worker_info()
     wid = worker_info.id if worker_info is not None else 0
+    if torch.distributed.is_initialized():
+        wid = torch.distributed.get_rank() * (worker_info.num_workers if worker_info is not None else 1) + wid
+    return wid
+
+def get_worker_rng():
+    wid = get_this_wid()
     if wid not in _worker_rngs:
         _worker_rngs[wid] = np.random.RandomState(_worker_rng_seed[0] + wid)
+        torch.manual_seed(_worker_rng_seed[0] + wid)
     return _worker_rngs[wid]
 
 

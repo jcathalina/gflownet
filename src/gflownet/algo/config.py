@@ -102,15 +102,19 @@ class TBConfig(StrictDataClass):
     do_parameterize_p_b: bool = False
     do_predict_n: bool = False
     do_sample_p_b: bool = False
+    do_sample_using_masks: bool = False
     do_length_normalize: bool = False
     subtb_max_len: int = 128
     Z_learning_rate: float = 1e-4
     Z_lr_decay: float = 50_000
+    regularize_logZ: Optional[float] = None
     cum_subtb: bool = True
     loss_fn: LossFN = LossFN.MSE
     loss_fn_par: float = 1.0
     n_loss: NLoss = NLoss.none
     n_loss_multiplier: float = 1.0
+    tb_loss_multiplier: float = 1.0
+    mle_loss_multiplier: float = 0.0
     backward_policy: Backward = Backward.Uniform
 
 
@@ -196,6 +200,7 @@ class AlgoConfig(StrictDataClass):
     train_det_after: Optional[int] = None
     valid_random_action_prob: float = 0.0
     sampling_tau: float = 0.0
+    grad_acc_steps: int = 1
     tb: TBConfig = field(default_factory=TBConfig)
     moql: MOQLConfig = field(default_factory=MOQLConfig)
     a2c: A2CConfig = field(default_factory=A2CConfig)

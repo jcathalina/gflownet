@@ -6,6 +6,8 @@ import torch
 import torch.distributed
 import torch.utils.data
 
+from gflownet.utils.misc import get_this_wid
+
 class SQLiteLogHook:
     def __init__(self, log_dir, ctx) -> None:
         self.log = None  # Only initialized in __call__, which will occur inside the worker
@@ -15,10 +17,7 @@ class SQLiteLogHook:
 
     def __call__(self, trajs, rewards, obj_props, cond_info):
         if self.log is None:
-            worker_info = torch.utils.data.get_worker_info()
-            self._wid = worker_info.id if worker_info is not None else 0
-            if torch.distributed.is_initialized():
-                self._wid = torch.distributed.get_rank() * (worker_info.num_workers if worker_info is not None else 1) + self._wid
+            self._wid = get_this_wid()
             os.makedirs(self.log_dir, exist_ok=True)
             self.log_path = f"{self.log_dir}/generated_objs_{self._wid}.db"
             self.log = SQLiteLog()

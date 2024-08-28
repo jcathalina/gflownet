@@ -52,6 +52,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     int atom_valences[num_atom_types];
     float used_valences[g->num_nodes];
     int max_valence[g->num_nodes];
+    int is_hypervalent[g->num_nodes];
     PyObject *_max_atom_valence = PyObject_GetAttrString(ctx, "_max_atom_valence"); // new ref
     for (int i = 0; i < num_atom_types; i++) {
         atom_valences[i] = PyLong_AsLong(PyDict_GetItem(_max_atom_valence, PyList_GetItem(atom_types, i))); // borrowed
@@ -71,9 +72,12 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
     PyObject *N_str = PyUnicode_FromString("N");
     Py_ssize_t nitro_attr_value = PySequence_Index(PyDict_GetItemString(gd->node_values, "v"), N_str);
     Py_DECREF(N_str);
+    PyObject *O_str = PyUnicode_FromString("O");
+    Py_ssize_t oxy_attr_value = PySequence_Index(PyDict_GetItemString(gd->node_values, "v"), O_str);
+    Py_DECREF(O_str);
     for (int i = 0; i < g->num_nodes; i++) {
         used_valences[i] = max_valence[i] = v_val[i] = charge_val[i] = explH_val[i] = chi_val[i] = noImpl_val[i] =
-            num_set_attribs[i] = 0;
+            num_set_attribs[i] = is_hypervalent[i] = 0;
     }
     for (int i = 0; i < g->num_node_attrs; i++) {
         int node_pos = g->node_attrs[3 * i];
@@ -85,7 +89,6 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
             max_valence[node_pos] += atom_valences[v_val[node_pos]];
         } else if (attr_type == charge_idx) {
             charge_val[node_pos] = attr_value;
-            max_valence[node_pos] -= 1; // If we change the possible charge ranges from [0,1,-1] this won't work
         } else if (attr_type == explH_idx) {
             explH_val[node_pos] = attr_value;
             max_valence[node_pos] -= attr_value;
@@ -118,11 +121,40 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
         used_valences[u] += bond_valence[bond_val[i]];
         used_valences[v] += bond_valence[bond_val[i]];
     }
-    // Correct for the valence of charge Nitro atoms
+
+    int is_any_hypervalent = 0;
+    // Correct for the valence of charge Nitro and Oxygen atoms
     for (int i = 0; i < g->num_nodes; i++) {
-        if (v_val[i] == nitro_attr_value && charge_val[i] == 1) {
-            max_valence[i] += 2;
+        if (charge_val[i] != 0){
+            if ((v_val[i] == nitro_attr_value || v_val[i] == oxy_attr_value)
+                && charge_val[i] == 1) {
+                max_valence[i] += 1;
+            }else{
+                max_valence[i] -= 1;
+            }
         }
+            
+        /* TODO: Figure out this charge thing...
+        wait or is the problem that I'm _removing_ valence for a + charged mol??
+        else if (charge_val[i] == 1) { 
+            // well... maybe this is true of the general case?
+            // if an atom is positively charged then we can just bond it to more stuff?
+            // why 2 for N?
+            max_valence[i] += 1;
+        }*/
+       // Determine hypervalent atoms
+       // Hypervalent atoms are atoms that have more than the maximum valence for their atom type because of a positive
+       // charge, but don't have this extra charge filled with bonds, or don't have no_impl set to 1
+    /*printf("%d used_valences: %f, max_valence: %d, charge_val: %d, noImpl_val: %d, atom_valences: %d -> %d\n", i, 
+            used_valences[i], max_valence[i], charge_val[i], noImpl_val[i], atom_valences[v_val[i]], 
+            (used_valences[i] >= atom_valences[v_val[i]] && charge_val[i] == 1 &&
+            !(used_valences[i] == max_valence[i] || noImpl_val[i] == 1)));
+        fflush(stdout);*/
+        /*if (used_valences[i] >= atom_valences[v_val[i]] && charge_val[i] == 1 &&
+            !(used_valences[i] == max_valence[i] || noImpl_val[i] == 1)) {
+            is_hypervalent[i] = 1;
+            is_any_hypervalent = 1;
+        }*/
     }
     // Compute creatable edges
     char can_create_edge[g->num_nodes][g->num_nodes];
@@ -224,7 +256,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
         if (g->degrees[i] <= 1 && !has_connecting_edge_attr_set[i] && num_set_attribs[i] == 1) {
             remove_node_mask[i] = 1;
         }
-        int is_nitro = v_val[i] == nitro_attr_value;
+        int is_special_valence = v_val[i] == nitro_attr_value || v_val[i] == oxy_attr_value;
         for (int j = 0; j < 5; j++) {
             int one_hot_idx = gd->node_attr_offsets[j] + _node_attrs[j][i];
             node_feat[i * gd->num_node_dim + one_hot_idx] = 1;
@@ -239,24 +271,30 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
                 // Special case: if the node is a positively charged Nitrogen, and the valence is maxed out (i.e. 5)
                 // the agent cannot remove the charge, it has to remove the bonds (or bond attrs) making this valence
                 // maxed out first.
-                if (j == charge_idx && is_nitro && used_valences[i] >= max_valence[i] && charge_val[i] == 1)
+                if (j == charge_idx && is_special_valence && used_valences[i] >= max_valence[i] && charge_val[i] == 1)
+                //if (j == charge_idx && used_valences[i] >= max_valence[i] && charge_val[i] == 1)
                     continue;
                 remove_node_attr_mask[i * gd->num_settable_node_attrs + j] = 1;
             } else {
                 // Special case for N: adding charge to N increases its valence by 2, so we don't want to prevent that
                 // action, even if the max_valence is "full" (for v=3)
-                if (j == charge_idx && used_valences[i] >= (max_valence[i] + (is_nitro ? 2 : 0))) // charge
-                    continue;
+                //if (j == charge_idx && is_nitro && used_valences[i] >= (max_valence[i] + (is_nitro ? 2 : 0))) // charge
+                //   continue;
                 if (j == explH_idx && used_valences[i] >= max_valence[i]) // expl_H
                     continue;
                 // Following on the special case, we made it here, now if the node is not yet charged but already
                 // has a valence of 3, the only charge we can add is a +1, which is the 0th logit
                 // (again this assumes charge ranges are [0,1,-1])
-                if (j == charge_idx && is_nitro && used_valences[i] >= max_valence[i] && charge_val[i] == 0){
-                    // printf("Setting 1: %d\n", i * gd->num_node_attr_logits + logit_slice_start);
+                //if (j == charge_idx && is_nitro && used_valences[i] >= max_valence[i] && charge_val[i] == 0){
+                //printf("valences: %f %d %d %d\n", used_valences[i], max_valence[i], charge_val[i], j);
+                if (j == charge_idx && is_special_valence && used_valences[i] >= max_valence[i]){
+                    //printf("Setting 1: %d\n", i * gd->num_node_attr_logits + logit_slice_start);
                     set_node_attr_mask[i * gd->num_node_attr_logits + logit_slice_start] = 1;
                     continue;
                 }
+                // Next, if the node is not yet charged, we can only add a charge if the valence is not maxed out
+                if (j == charge_idx && used_valences[i] >= max_valence[i])
+                    continue;
                 // printf("Setting: %d %d, %d %d\n", j, i * gd->num_node_attr_logits + logit_slice_start, logit_slice_end, logit_slice_start);
                 memsetf(set_node_attr_mask + i * gd->num_node_attr_logits + logit_slice_start, 1,
                         (logit_slice_end - logit_slice_start));
@@ -335,7 +373,7 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
         raise(SIGINT);
         return NULL;
     }
-    *stop_mask = g->num_nodes > 0 ? 1 : 0;
+    *stop_mask = (g->num_nodes > 0 ? 1 : 0) && !is_any_hypervalent;
     if (RETURN_C_DATA) {
         // Data *data_obj = DataType.tp_new(&DataType, NULL, NULL);
         Data *data_obj = (Data *)PyObject_CallObject((PyObject *)&DataType, NULL);

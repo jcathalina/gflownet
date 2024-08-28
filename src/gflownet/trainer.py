@@ -106,18 +106,19 @@ class GFNTrainer:
     def setup_data(self):
         pass
 
-    def step(self, loss: Tensor):
+    def step(self, loss: Tensor, train_it: int):
         raise NotImplementedError()
 
     def setup(self):
-        if os.path.exists(self.cfg.log_dir):
-            if self.cfg.overwrite_existing_exp:
-                shutil.rmtree(self.cfg.log_dir)
-            else:
-                raise ValueError(
-                    f"Log dir {self.cfg.log_dir} already exists. Set overwrite_existing_exp=True to delete it."
-                )
-        os.makedirs(self.cfg.log_dir)
+        if self.rank == 0:
+            if os.path.exists(self.cfg.log_dir):
+                if self.cfg.overwrite_existing_exp:
+                    shutil.rmtree(self.cfg.log_dir)
+                else:
+                    raise ValueError(
+                        f"Log dir {self.cfg.log_dir} already exists. Set overwrite_existing_exp=True to delete it."
+                    )
+            os.makedirs(self.cfg.log_dir)
 
         RDLogger.DisableLog("rdApp.*")
         set_worker_rng_seed(self.cfg.seed)
@@ -228,7 +229,7 @@ class GFNTrainer:
             loss, info = self.algo.compute_batch_losses(self.model, batch)
             if not torch.isfinite(loss):
                 raise ValueError("loss is not finite")
-            step_info = self.step(loss)
+            step_info = self.step(loss, train_it)
             self.algo.step()  # This also isn't used anywhere?
             if self._validate_parameters and not all([torch.isfinite(i).all() for i in self.model.parameters()]):
                 raise ValueError("parameters are not finite")
@@ -392,6 +393,8 @@ class GFNTrainer:
             terminate()
 
     def _save_state(self, it):
+        if self.rank != 0:
+            return
         state = {
             "models_state_dict": [self.model.state_dict()],
             "cfg": self.cfg,

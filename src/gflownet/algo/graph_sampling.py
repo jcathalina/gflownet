@@ -230,6 +230,7 @@ class GraphSampler:
             Probability of taking a random action (only used if model parameterizes P_B)
 
         """
+        starting_graphs = list(graphs)
         dev = get_worker_device()
         n = len(graphs)
         done = [False] * n
@@ -238,7 +239,7 @@ class GraphSampler:
                 "traj": [(graphs[i], GraphAction(GraphActionType.Stop))],
                 "is_valid": True,
                 "is_sink": [1],
-                "bck_a": [GraphAction(GraphActionType.Stop)],
+                "bck_a": [GraphAction(GraphActionType.Pad)],
                 "bck_logprobs": [0.0],
                 "result": graphs[i],
             }
@@ -293,10 +294,10 @@ class GraphSampler:
         for i in range(n):
             # See comments in sample_from_model
             data[i]["traj"] = data[i]["traj"][::-1]
-            data[i]["bck_a"] = [GraphAction(GraphActionType.Stop)] + data[i]["bck_a"][::-1]
+            data[i]["bck_a"] = [GraphAction(GraphActionType.Pad)] + data[i]["bck_a"][::-1]
             data[i]["is_sink"] = data[i]["is_sink"][::-1]
             data[i]["bck_logprobs"] = torch.tensor(data[i]["bck_logprobs"][::-1], device=dev).reshape(-1)
             if self.pad_with_terminal_state:
-                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Stop)))
+                data[i]["traj"].append((starting_graphs[i], GraphAction(GraphActionType.Pad)))
                 data[i]["is_sink"].append(1)
         return data

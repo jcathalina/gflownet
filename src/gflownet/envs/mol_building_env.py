@@ -177,6 +177,9 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def ActionIndex_to_GraphAction(self, g: gd.Data, aidx: ActionIndex, fwd: bool = True):
         """Translate an action index (e.g. from a GraphActionCategorical) to a GraphAction"""
+        if aidx.action_type == -1:
+            # Pad action
+            return GraphAction(GraphActionType.Pad)
         if fwd:
             t = self.action_type_order[aidx.action_type]
         else:
@@ -217,6 +220,8 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
 
     def GraphAction_to_ActionIndex(self, g: gd.Data, action: GraphAction) -> ActionIndex:
         """Translate a GraphAction to an index tuple"""
+        if action.action is GraphActionType.Pad:
+            return ActionIndex(action_type=-1, row_idx=0, col_idx=0)
         for u in [self.action_type_order, self.bck_action_type_order]:
             if action.action in u:
                 type_idx = u.index(action.action)
@@ -498,5 +503,14 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
             mol = self.graph_to_obj(g)
             assert mol is not None
             return Chem.MolToSmiles(mol)
+        except Exception:
+            return ""
+
+    def get_unique_obj(self, g: Graph):
+        """Convert a Graph to a canonical SMILES representation"""
+        try:
+            mol = self.graph_to_obj(g)
+            assert mol is not None
+            return Chem.CanonSmiles(Chem.MolToSmiles(mol))
         except Exception:
             return ""

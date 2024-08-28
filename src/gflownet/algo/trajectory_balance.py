@@ -219,6 +219,10 @@ class TrajectoryBalance(GFNAlgorithm):
             return self.graph_sampler.sample_backward_from_graphs(
                 graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, random_action_prob
             )
+        elif self.cfg.do_sample_using_masks:
+            return self.graph_sampler.sample_backward_from_graphs(
+                graphs, None, cond_info, random_action_prob
+            )
         trajs: List[Dict[str, Any]] = [{"traj": generate_forward_trajectory(i)} for i in graphs]
         for traj in trajs:
             n_back = [
@@ -575,13 +579,20 @@ class TrajectoryBalance(GFNAlgorithm):
             num_bootstrap = num_bootstrap or len(log_rewards)
             reward_losses = self._loss(log_rewards[:num_bootstrap] - log_reward_preds[:num_bootstrap], self.reward_loss)
 
-            reward_loss = reward_losses.mean() * self.cfg.reward_loss_multiplier
+            reward_loss = reward_losses.mean()
         else:
             reward_loss = 0
+        
+        log_Z_reg_loss = (log_Z - self.cfg.regularize_logZ).pow(2).mean() if self.cfg.regularize_logZ is not None else 0
 
         n_loss = n_loss.mean()
         tb_loss = traj_losses.mean()
-        loss = tb_loss + reward_loss + self.cfg.n_loss_multiplier * n_loss
+        mle_loss = -traj_log_p_F.mean()
+        loss = (tb_loss * self.cfg.tb_loss_multiplier
+                + reward_loss * self.cfg.reward_loss_multiplier
+                + n_loss * self.cfg.n_loss_multiplier
+                + log_Z_reg_loss 
+                + mle_loss  * self.cfg.mle_loss_multiplier)
         info = {
             "reward_loss": reward_loss,
             "invalid_trajectories": invalid_mask.sum() / batch.num_online if batch.num_online > 0 else 0,
@@ -592,7 +603,7 @@ class TrajectoryBalance(GFNAlgorithm):
             "loss": loss.item(),
             "n_loss": n_loss,
             "tb_loss": tb_loss.item(),
-            "batch_entropy": -traj_log_p_F.mean(),
+            "batch_entropy": fwd_cat.entropy().mean(),
             "traj_lens": batch.traj_lens.float().mean(),
             'avg_log_reward': clip_log_R.mean(),
         }
@@ -611,6 +622,8 @@ class TrajectoryBalance(GFNAlgorithm):
                 d = d * d
                 d[final_graph_idx] = 0
                 info["n_loss_maxent"] = scatter(d, batch_idx, dim=0, dim_size=num_trajs, reduce="sum").mean()
+        if self.cfg.mle_loss_multiplier != 0:
+            info["mle_loss"] = mle_loss.item()
 
         if not torch.isfinite(loss):
             import pdb; pdb.set_trace()

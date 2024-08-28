@@ -67,6 +67,8 @@ class GraphActionType(enum.Enum):
     RemoveEdge = enum.auto()
     RemoveNodeAttr = enum.auto()
     RemoveEdgeAttr = enum.auto()
+    # The Pad action is always unmasked, and always has logprob 0
+    Pad = -1
 
     @cached_property
     def cname(self):
@@ -823,7 +825,7 @@ class GraphActionCategorical:
         # if it wants to convert these indices to env-compatible actions
         return argmaxes
 
-    def log_prob(self, actions: List[ActionIndex], logprobs: torch.Tensor = None, batch: torch.Tensor = None):
+    def log_prob(self, actions: List[ActionIndex], logprobs: torch.Tensor = None, batch: torch.Tensor = None, pad_value: float = 0.0):
         """The log-probability of a list of action tuples, effectively indexes `logprobs` using internal
         slice indices.
 
@@ -848,12 +850,14 @@ class GraphActionCategorical:
             logprobs = self.logsoftmax()
         if batch is None:
             batch = torch.arange(N, device=self.dev)
+        pad = torch.tensor(pad_value, device=self.dev)
         # We want to do the equivalent of this:
         #    [logprobs[t][row + self.slice[t][i], col] for i, (t, row, col) in zip(batch, actions)]
         # but faster.
 
         # each action is a 3-tuple ActionIndex (type, row, column), where type is the index of the action type group.
-        actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
+        unclamped_actions = torch.as_tensor(actions, device=self.dev, dtype=torch.long)
+        actions = unclamped_actions.clamp(0)  # Clamp to 0 to avoid the -1 Pad action
         assert actions.shape[0] == batch.shape[0]  # Check there are as many actions as batch indices
         # To index the log probabilities efficiently, we will ravel the array, and compute the
         # indices of the raveled actions.
@@ -878,7 +882,10 @@ class GraphActionCategorical:
         # This is the last index in the raveled tensor, therefore the offset is just the column value
         col_offsets = actions[:, 2]
         # Index the flattened array
-        return all_logprobs[t_offsets + row_offsets + col_offsets]
+        raw_logprobs = all_logprobs[t_offsets + row_offsets + col_offsets]
+        # Now we replaced the Pad actions with 0s
+        logprobs = raw_logprobs.where(unclamped_actions[:, 0] != GraphActionType.Pad.value, pad)
+        return logprobs
 
     def entropy(self, logprobs=None):
         """The entropy for each graph categorical in the batch
@@ -900,7 +907,7 @@ class GraphActionCategorical:
             [
                 scatter(im, b, dim=0, dim_size=self.num_graphs, reduce="sum").sum(1)
                 for i, b, m in zip(logprobs, self.batch, masks)
-                for im in [i.masked_fill(m == 0.0, 0) if m is not None else i]
+                for im in [i.exp() * i.masked_fill(m == 0.0, 0) if m is not None else i.exp() * i]
             ]
         )
         return entropy
@@ -1030,8 +1037,13 @@ class GraphBuildingEnvContext:
     def traj_log_n(self, traj):
         return [self.log_n(g) for g, _ in traj]
 
+    def get_unique_obj(self, g: Graph):
+        return None
+
 
 def action_type_to_mask(t: GraphActionType, gbatch: gd.Batch, assert_mask_exists: bool = False):
+    if t == GraphActionType.Pad:
+        return torch.ones((1, 1), device=gbatch.x.device)
     if assert_mask_exists:
         assert hasattr(gbatch, t.mask_name), f"Mask {t.mask_name} not found in graph data"
     return getattr(gbatch, t.mask_name) if hasattr(gbatch, t.mask_name) else torch.ones((1, 1), device=gbatch.x.device)

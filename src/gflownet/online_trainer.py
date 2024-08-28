@@ -65,6 +65,14 @@ class StandardOnlineTrainer(GFNTrainer):
                 weight_decay=self.cfg.opt.weight_decay,
                 eps=self.cfg.opt.adam_eps,
             )
+        elif self.cfg.opt.opt == "adamW":
+            return torch.optim.AdamW(
+                params,
+                lr,
+                (momentum, 0.999),
+                weight_decay=self.cfg.opt.weight_decay,
+                eps=self.cfg.opt.adam_eps,
+            )
 
         raise NotImplementedError(f"{self.cfg.opt.opt} is not implemented")
 
@@ -121,12 +129,18 @@ class StandardOnlineTrainer(GFNTrainer):
         with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w", encoding="utf8") as f:
             f.write(yaml_cfg)
 
-    def step(self, loss: Tensor):
+    def step(self, loss: Tensor, train_it: int):
         loss.backward()
-        with torch.no_grad():
-            g0 = model_grad_norm(self.model)
-            self.clip_grad_callback(self.model.parameters())
-            g1 = model_grad_norm(self.model)
+        info = {}
+        if train_it % self.cfg.algo.grad_acc_steps != 0:
+            return info
+        if self.cfg.opt.clip_grad_type is not None:
+            with torch.no_grad():
+                g0 = model_grad_norm(self.model)
+                self.clip_grad_callback(self.model.parameters())
+                g1 = model_grad_norm(self.model)
+                info["grad_norm"] = g0.item()
+                info["grad_norm_clip"] = g1.item()
         self.opt.step()
         self.opt.zero_grad()
         self.lr_sched.step()
@@ -137,7 +151,7 @@ class StandardOnlineTrainer(GFNTrainer):
         if self.sampling_tau > 0:
             for a, b in zip(self.model.parameters(), self.sampling_model.parameters()):
                 b.data.mul_(self.sampling_tau).add_(a.data * (1 - self.sampling_tau))
-        return {"grad_norm": g0, "grad_norm_clip": g1}
+        return info
 
 
 class AvgRewardHook:
