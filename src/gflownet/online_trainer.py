@@ -9,6 +9,7 @@ from torch import Tensor
 
 from gflownet.algo.advantage_actor_critic import A2C
 from gflownet.algo.flow_matching import FlowMatching
+from gflownet.algo.local_search_tb import LocalSearchTB
 from gflownet.algo.soft_q_learning import SoftQLearning
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.replay_buffer import ReplayBuffer
@@ -38,6 +39,8 @@ class StandardOnlineTrainer(GFNTrainer):
         algo = self.cfg.algo.method
         if algo == "TB":
             algo = TrajectoryBalance
+        elif algo == 'LSTB':
+            algo = LocalSearchTB
         elif algo == "FM":
             algo = FlowMatching
         elif algo == "A2C":
@@ -47,6 +50,9 @@ class StandardOnlineTrainer(GFNTrainer):
         else:
             raise ValueError(algo)
         self.algo = algo(self.env, self.ctx, self.cfg)
+
+        if self.algo.requires_task:
+            self.algo.set_task(self.task)
 
     def setup_data(self):
         self.training_data = []
@@ -125,9 +131,9 @@ class StandardOnlineTrainer(GFNTrainer):
         if self.print_config:
             print("\n\nHyperparameters:\n")
             print(yaml_cfg)
-        os.makedirs(self.cfg.log_dir, exist_ok=True)
-        with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w", encoding="utf8") as f:
-            f.write(yaml_cfg)
+        if self.cfg.log_dir is not None:
+            with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w", encoding="utf8") as f:
+                f.write(yaml_cfg)
 
     def step(self, loss: Tensor, train_it: int):
         loss.backward()

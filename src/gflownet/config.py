@@ -90,7 +90,7 @@ class Config(StrictDataClass):
     """
 
     desc: str = "noDesc"
-    log_dir: str = MISSING
+    log_dir: Optional[str] = MISSING
     device: str = "cuda"
     seed: int = 0
     validate_every: int = 1000

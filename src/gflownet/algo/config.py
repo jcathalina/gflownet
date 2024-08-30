@@ -148,6 +148,12 @@ class SQLConfig(StrictDataClass):
     gamma: float = 1
     penalty: float = -10
 
+@dataclass
+class LSTBConfig(StrictDataClass):
+    num_ls_steps: int = 1
+    num_bck_steps: int = 1
+    accept_criteria: str = "deterministic"
+
 
 @dataclass
 class AlgoConfig(StrictDataClass):
@@ -206,3 +212,4 @@ class AlgoConfig(StrictDataClass):
     a2c: A2CConfig = field(default_factory=A2CConfig)
     fm: FMConfig = field(default_factory=FMConfig)
     sql: SQLConfig = field(default_factory=SQLConfig)
+    ls: LSTBConfig = field(default_factory=LSTBConfig)

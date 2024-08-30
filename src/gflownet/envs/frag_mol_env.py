@@ -105,6 +105,9 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
         action: GraphAction
             A graph action whose type is one of Stop, AddNode, or SetEdgeAttr.
         """
+        if aidx.action_type == -1:
+            # Pad action
+            return GraphAction(GraphActionType.Pad)
         if fwd:
             t = self.action_type_order[aidx.action_type]
         else:
@@ -147,6 +150,8 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
              A triple describing the type of action, and the corresponding row and column index for
              the corresponding Categorical matrix.
         """
+        if action.action is GraphActionType.Pad:
+            return ActionIndex(action_type=-1, row_idx=0, col_idx=0)
         # Find the index of the action type, privileging the forward actions
         for u in [self.action_type_order, self.bck_action_type_order]:
             if action.action in u:

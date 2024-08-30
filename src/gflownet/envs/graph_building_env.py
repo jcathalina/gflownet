@@ -345,7 +345,7 @@ class GraphBuildingEnv:
 
     def reverse(self, g: Graph, ga: GraphAction):
         if ga.action == GraphActionType.Stop:
-            return ga
+            return GraphAction(GraphActionType.Pad)  # because we can't reverse a Stop action
         elif ga.action == GraphActionType.AddNode:
             return GraphAction(GraphActionType.RemoveNode, source=len(g.nodes))
         elif ga.action == GraphActionType.AddEdge:

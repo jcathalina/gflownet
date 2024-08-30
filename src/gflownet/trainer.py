@@ -110,7 +110,7 @@ class GFNTrainer:
         raise NotImplementedError()
 
     def setup(self):
-        if self.rank == 0:
+        if self.cfg.log_dir and self.rank == 0:
             if os.path.exists(self.cfg.log_dir):
                 if self.cfg.overwrite_existing_exp:
                     shutil.rmtree(self.cfg.log_dir)
@@ -286,7 +286,7 @@ class GFNTrainer:
         validation every `validate_every` minibatches.
         """
         if logger is None:
-            logger = create_logger(logfile=self.cfg.log_dir + "/train.log")
+            logger = create_logger(logfile=self.cfg.log_dir + "/train.log" if self.cfg.log_dir else None)
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         import threading
@@ -393,7 +393,7 @@ class GFNTrainer:
             terminate()
 
     def _save_state(self, it):
-        if self.rank != 0:
+        if self.rank != 0 or self.cfg.log_dir is None:
             return
         state = {
             "models_state_dict": [self.model.state_dict()],

@@ -137,8 +137,7 @@ class DataSource(IterableDataset):
                 t = self.current_iter
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
-                # TODO: in the cond info refactor, pass the whole thing instead of just the encoding
-                trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info, p)
                 self.mark_all(trajs, source='sample')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
@@ -168,7 +167,7 @@ class DataSource(IterableDataset):
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(n_this_time, t)
                 # TODO: in the cond info refactor, pass the whole thing instead of just the encoding
-                trajs = self.algo.create_training_data_from_own_samples(model, n_this_time, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_own_samples(model, n_this_time, cond_info, p)
                 self.mark_all(trajs, source='sample')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
@@ -199,7 +198,7 @@ class DataSource(IterableDataset):
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
-                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info, p)
                 self.mark_all(trajs, source='dataset')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
@@ -218,7 +217,7 @@ class DataSource(IterableDataset):
                 # I'm also not a fan of encode_conditional_information, it assumes lots of things about what's passed to
                 # it and the state of the program (e.g. validation mode)
                 cond_info = self.task.encode_conditional_information(torch.stack([data[i] for i in idcs]))
-                trajs = self.algo.create_training_data_from_own_samples(model, len(idcs), cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_own_samples(model, len(idcs), cond_info, p)
                 self.mark_all(trajs, source='dataset')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
@@ -241,7 +240,7 @@ class DataSource(IterableDataset):
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
-                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info["encoding"], p)
+                trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info, p)
                 self.mark_all(trajs, source='dataset')
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
@@ -289,6 +288,8 @@ class DataSource(IterableDataset):
 
     def compute_properties(self, trajs, mark_as_online=False):
         """Sets trajs' obj_props and is_valid keys by querying the task."""
+        if all('obj_props' in t for t in trajs):
+            return
         # TODO: refactor obj_props into properties
         valid_idcs = torch.tensor([i for i in range(len(trajs)) if trajs[i].get("is_valid", True)]).long()
         # fetch the valid trajectories endpoints
@@ -304,13 +305,15 @@ class DataSource(IterableDataset):
         all_fr[valid_idcs] = obj_props
         for i in range(len(trajs)):
             trajs[i]["obj_props"] = all_fr[i]
-            trajs[i]["is_online"] = mark_as_online
+            trajs[i]["is_online"] = mark_as_online  # TODO: this is deprecated in favor of 'source'?
         # Override the is_valid key in case the task made some objs invalid
         for i in valid_idcs:
             trajs[i]["is_valid"] = True
 
     def compute_log_rewards(self, trajs):
         """Sets trajs' log_reward key by querying the task."""
+        if all('log_reward' in t for t in trajs):
+            return
         obj_props = torch.stack([t["obj_props"] for t in trajs])
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
         log_rewards = self.task.cond_info_to_logreward(cond_info, obj_props)
@@ -327,10 +330,14 @@ class DataSource(IterableDataset):
 
     def set_traj_cond_info(self, trajs, cond_info):
         for i in range(len(trajs)):
+            if 'cond_info' in trajs[i]:
+                continue
             trajs[i]["cond_info"] = {k: cond_info[k][i] for k in cond_info}
 
     def set_traj_props(self, trajs, props):
         for i in range(len(trajs)):
+            if 'obj_props' in trajs[i]:
+                continue
             trajs[i]["obj_props"] = props[i]  # TODO: refactor
 
     def relabel_in_hindsight(self, trajs):

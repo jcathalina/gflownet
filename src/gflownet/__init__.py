@@ -19,6 +19,7 @@ class GFNAlgorithm:
     updates: int = 0
     global_cfg: Config
     is_eval: bool = False
+    requires_task: bool = False
 
     def step(self):
         self.updates += 1  # This isn't used anywhere?
@@ -77,6 +78,8 @@ class GFNAlgorithm:
             return self.global_cfg.algo.train_random_action_prob
         return 0
 
+    def set_task(self, task):
+        raise NotImplementedError()
 
 class GFNTask:
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], obj_props: ObjectProperties) -> LogScalar:

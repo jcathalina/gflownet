@@ -174,17 +174,10 @@ class TrajectoryBalance(GFNAlgorithm):
            - reward_pred: float, -100 if an illegal action is taken, predicted R(x) if bootstrapping, None otherwise
            - fwd_logprob: log Z + sum logprobs P_F
            - bck_logprob: sum logprobs P_B
-           - logZ: predicted log Z
            - loss: predicted loss (if bootstrapping)
            - is_valid: is the generated graph valid according to the env & ctx
         """
-        dev = get_worker_device()
-        cond_info = cond_info.to(dev) if cond_info is not None else None
         data = self.graph_sampler.sample_from_model(model, n, cond_info, random_action_prob)
-        if cond_info is not None:
-            logZ_pred = model.logZ(cond_info)
-            for i in range(n):
-                data[i]["logZ"] = logZ_pred[i].item()
         return data
 
     def create_training_data_from_graphs(
@@ -214,8 +207,6 @@ class TrajectoryBalance(GFNAlgorithm):
         """
         if self.cfg.do_sample_p_b:
             assert model is not None and cond_info is not None and random_action_prob is not None
-            dev = get_worker_device()
-            cond_info = cond_info.to(dev)
             return self.graph_sampler.sample_backward_from_graphs(
                 graphs, model if self.cfg.do_parameterize_p_b else None, cond_info, random_action_prob
             )
@@ -229,10 +220,10 @@ class TrajectoryBalance(GFNAlgorithm):
                 self.env.count_backward_transitions(gp, check_idempotent=self.cfg.do_correct_idempotent)
                 for gp, _ in traj["traj"][1:]
             ] + [1]
-            traj["bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(get_worker_device())
+            traj["U_bck_logprobs"] = (1 / torch.tensor(n_back).float()).log().to(get_worker_device())
             traj["result"] = traj["traj"][-1][0]
             if self.cfg.do_parameterize_p_b:
-                traj["bck_a"] = [GraphAction(GraphActionType.Stop)] + [self.env.reverse(g, a) for g, a in traj["traj"]]
+                traj["bck_a"] = [GraphAction(GraphActionType.Pad)] + [self.env.reverse(g, a) for g, a in traj["traj"]]
                 # There needs to be an additonal node when we're parameterizing P_B,
                 # See sampling with parametrized P_B
                 traj["traj"].append(deepcopy(traj["traj"][-1]))
@@ -316,7 +307,7 @@ class TrajectoryBalance(GFNAlgorithm):
             ]
         batch = self.ctx.collate(torch_graphs)
         batch.traj_lens = torch.tensor([len(i["traj"]) for i in trajs])
-        batch.log_p_B = torch.cat([i["bck_logprobs"] for i in trajs], 0)
+        batch.U_log_p_B = torch.cat([i["U_bck_logprobs"] for i in trajs], 0)
         batch.actions = torch.tensor(actions)
         if self.cfg.do_parameterize_p_b:
             batch.bck_actions = torch.tensor(
@@ -353,7 +344,7 @@ class TrajectoryBalance(GFNAlgorithm):
                 batch.bck_ip_lens = torch.tensor([len(i) for i in bck_ipa])
 
         # compute_batch_losses expects these two optional values, if someone else doesn't fill them in, default to 0
-        batch.num_offline = 0
+        batch.num_offline = 0  # TODO: this has been half-deprecated, finish the job
         batch.num_online = 0
         return batch
 
@@ -475,7 +466,7 @@ class TrajectoryBalance(GFNAlgorithm):
             # occasion masks out the first P_B of the "next" trajectory that we've shifted.
             log_p_B = torch.roll(log_p_B, -1, 0) * (1 - batch.is_sink)
         else:
-            log_p_B = batch.log_p_B
+            log_p_B = batch.U_log_p_B
         assert log_p_F.shape == log_p_B.shape
 
         if self.cfg.n_loss == NLoss.TB:
@@ -506,13 +497,15 @@ class TrajectoryBalance(GFNAlgorithm):
 
         if self.cfg.do_parameterize_p_b:
             # Life is pain, log_p_B is one unit too short for all trajs
+            log_p_B_unif = batch.U_log_p_B
+            assert log_p_B_unif.shape[0] == log_p_B.shape[0] 
 
-            log_p_B_unif = torch.zeros_like(log_p_B)
-            for i, (s, e) in enumerate(zip(first_graph_idx, traj_cumlen)):
-                log_p_B_unif[s : e - 1] = batch.log_p_B[s - i : e - 1 - i]
+            # log_p_B_unif = torch.zeros_like(log_p_B)
+            # for i, (s, e) in enumerate(zip(first_graph_idx, traj_cumlen)):
+            #     log_p_B_unif[s : e - 1] = batch.U_log_p_B[s - i : e - 1 - i]
 
-            if self.cfg.backward_policy == Backward.Uniform:
-                log_p_B = log_p_B_unif
+            # if self.cfg.backward_policy == Backward.Uniform:
+            #     log_p_B = log_p_B_unif
         else:
             log_p_B_unif = log_p_B
 
