@@ -153,6 +153,7 @@ class LSTBConfig(StrictDataClass):
     num_ls_steps: int = 1
     num_bck_steps: int = 1
     accept_criteria: str = "deterministic"
+    yield_only_accepted: bool = False
 
 
 @dataclass

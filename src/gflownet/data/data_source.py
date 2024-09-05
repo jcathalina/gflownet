@@ -86,9 +86,8 @@ class DataSource(IterableDataset):
                 for d in batch_infos:
                     batch_info.update(d)
                 yield self.create_batch(trajs, batch_info)
-            except Exception as e:
-                if 1:
-                    raise e
+                err_tol = 10 # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
+            except (Exception, RuntimeError) as e:
                 err_tol -= 1
                 if err_tol == 0:
                     raise e
@@ -98,7 +97,13 @@ class DataSource(IterableDataset):
                 traceback.print_exc()
                 traceback.print_exc(file=sys.stderr)
                 continue
-            err_tol = 10 # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
+            except:
+                print("Unknown error in DataSource")
+                import traceback, sys
+                traceback.print_exc()
+                traceback.print_exc(file=sys.stderr)
+                err_tol -= 1
+                continue
 
     def validate_batch(self, batch, trajs):
         for actions, atypes in [(batch.actions, self.ctx.action_type_order)] + (

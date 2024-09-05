@@ -13,6 +13,7 @@ from gflownet.envs.graph_building_env import (
     GraphActionType,
     action_type_to_mask,
 )
+from gflownet.algo.config import LSTBConfig
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.utils.misc import get_worker_device, get_worker_rng
 
@@ -215,10 +216,8 @@ class GraphSampler:
         n: int,
         cond_info: Optional[Tensor],
         random_action_prob: float = 0.0,
-        num_ls_steps: int = 1,
-        num_bck_steps: int = 1,
+        cfg: LSTBConfig = LSTBConfig(),
         compute_reward: Optional[Callable] = None,
-        criteria: str = "deterministic",
     ):
         dev = get_worker_device()
         rng = get_worker_rng()
@@ -237,11 +236,11 @@ class GraphSampler:
             for t in current_trajs:
                 t["traj"] = t["traj"][:-1]  # Remove the padding state
 
-        for mcmc_steps in range(num_ls_steps):
+        for mcmc_steps in range(cfg.num_ls_steps):
             # First we must do a bit of accounting so that we can later prevent trajectories longer than max_len
             stop = GraphActionType.Stop
             num_pad = [(1 if t["traj"][-1][1].action == stop else 0) for t in current_trajs]
-            trunc_lens = [max(0, len(i["traj"]) - num_bck_steps - pad) for i, pad in zip(current_trajs, num_pad)]
+            trunc_lens = [max(0, len(i["traj"]) - cfg.num_bck_steps - pad) for i, pad in zip(current_trajs, num_pad)]
 
             # Go backwards num_bck_steps steps
             bck_trajs = [
@@ -250,7 +249,7 @@ class GraphSampler:
             graphs = [i["traj"][-1][0] for i in current_trajs]
             done = [False] * n
             fwd_a = []
-            for i in range(num_bck_steps):
+            for i in range(cfg.num_bck_steps):
                 # This modifies `bck_trajs` & `graphs` in place, passing fwd_a computes P_F(s|s') for the previous step
                 self._backward_step(model, bck_trajs, graphs, cond_info, done, dev, fwd_a)
                 fwd_a = [t["traj"][-1][1] for t in bck_trajs]
@@ -278,6 +277,7 @@ class GraphSampler:
 
             # We add those new terminal states to the list of terminal states
             terminals = [t["traj"][-1][0] for t in fwd_trajs]
+            import pdb; pdb.set_trace()
             sampled_terminals.extend(terminals)
             for traj, term in zip(fwd_trajs, terminals):
                 traj["result"] = term
@@ -287,11 +287,11 @@ class GraphSampler:
 
             # To end the iteration, we replace the current trajectories with the new ones if they are accepted by MH
             for i in range(n):
-                if criteria == "deterministic":
+                if cfg.accept_criteria == "deterministic":
                     # Keep the highest reward
                     if fwd_trajs[i]["log_reward"] > current_trajs[i]["log_reward"]:
                         current_trajs[i] = fwd_trajs[i]
-                elif criteria == "stochastic":
+                elif cfg.accept_criteria == "stochastic":
                     # Accept with probability max(1, R(x')/R(x)q(x'|x)/q(x|x'))
                     log_q_xprime_given_x = log_P_B_tau_back[i] + log_P_F_tau_recon[i]
                     log_q_x_given_xprime = log_P_B_tau_recon[i] + log_P_F_tau_back[i]
@@ -299,14 +299,22 @@ class GraphSampler:
                     log_acceptance_ratio = log_R_ratio + log_q_xprime_given_x - log_q_x_given_xprime
                     if log_acceptance_ratio > 0 or rng.uniform() < torch.exp(log_acceptance_ratio):
                         current_trajs[i] = fwd_trajs[i]
-                elif criteria == "always":
+                elif cfg.accept_criteria == "always":
                     current_trajs[i] = fwd_trajs[i]
+
         # Finally, we resample new "P_B-on-policy" trajectories from the terminal states
-        stacked_ci = (
-            {k: cond_info[k].repeat(num_ls_steps, *((1,) * (cond_info[k].ndim - 1))) for k in cond_info}
-            if cond_info is not None
-            else None
-        )
+        # If we're only interested in the accepted trajectories, we use them as starting points instead
+        if cfg.yield_only_accepted:
+            sampled_terminals = [i['traj'][-1][0] for i in current_trajs]
+            stacked_ci = cond_info
+
+        if not cfg.yield_only_accepted:
+            # In this scenario, the batch is n // num_ls_steps, so we do some stacking
+            stacked_ci = (
+                {k: cond_info[k].repeat(cfg.num_ls_steps, *((1,) * (cond_info[k].ndim - 1))) for k in cond_info}
+                if cond_info is not None
+                else None
+            )
         returned_trajs = self.sample_backward_from_graphs(sampled_terminals, model, stacked_ci, random_action_prob)
         return returned_trajs + initial_trajs
 

@@ -128,6 +128,8 @@ class GFNTrainer:
         self.setup_env_context()
         self.setup_algo()
         self.setup_model()
+        if self.cfg.load_model_state is not None:
+            self.load_state(self.cfg.load_model_state)
 
     def _wrap_for_mp(self, obj):
         """Wraps an object in a placeholder whose reference can be sent to a
@@ -410,6 +412,10 @@ class GFNTrainer:
             )
         if self.cfg.store_all_checkpoints:
             shutil.copy(fn, pathlib.Path(self.cfg.log_dir) / f"model_state_{it}.pt")
+
+    def load_state(self, path):
+        state = torch.load(path)
+        self.model.load_state_dict(state["models_state_dict"][0])
 
     def log(self, info, index, key):
         if not hasattr(self, "_summary_writer"):

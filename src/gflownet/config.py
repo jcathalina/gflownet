@@ -96,6 +96,7 @@ class Config(StrictDataClass):
     validate_every: int = 1000
     checkpoint_every: Optional[int] = None
     store_all_checkpoints: bool = False
+    load_model_state: Optional[str] = None
     print_every: int = 100
     start_at_step: int = 0
     num_final_gen_steps: Optional[int] = None
