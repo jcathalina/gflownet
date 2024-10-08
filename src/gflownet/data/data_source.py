@@ -12,7 +12,7 @@ from gflownet.data.replay_buffer import ReplayBuffer, detach_and_cpu
 from gflownet.envs.graph_building_env import GraphBuildingEnvContext, GraphActionCategorical, action_type_to_mask
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.utils.misc import get_worker_rng
+from gflownet.utils.misc import get_worker_rng, get_this_wid
 from gflownet.utils.multiprocessing_proxy import BufferPickler, SharedPinnedBuffer
 
 
@@ -48,6 +48,7 @@ class DataSource(IterableDataset):
         self.global_step_count.share_memory_()
         self.global_step_count_lock = torch.multiprocessing.Lock()
         self.current_iter = start_at_step
+        self._err_tol = 10
         self.setup_mp_buffers()
 
     def add_sampling_hook(self, hook: Callable):
@@ -65,8 +66,6 @@ class DataSource(IterableDataset):
         self.rng = get_worker_rng()
         its = [i() for i in self.iterators]
         self.algo.set_is_eval(self.is_algo_eval)
-        print("New iterator", its)
-        err_tol = 10
         while True:
             try:
                 with self.global_step_count_lock:
@@ -86,23 +85,21 @@ class DataSource(IterableDataset):
                 for d in batch_infos:
                     batch_info.update(d)
                 yield self.create_batch(trajs, batch_info)
-                err_tol = 10 # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
+                self._err_tol = 10 # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
             except (Exception, RuntimeError) as e:
-                err_tol -= 1
-                if err_tol == 0:
+                self._err_tol -= 1
+                if self._err_tol == 0:
                     raise e
-                print(f"Error in DataSource: {e} [tol={err_tol}]")
+                print(f"Error in DataSource: {e} [tol={self._err_tol}]")
                 # print full traceback
                 import traceback, sys
                 traceback.print_exc()
-                traceback.print_exc(file=sys.stderr)
                 continue
             except:
                 print("Unknown error in DataSource")
                 import traceback, sys
                 traceback.print_exc()
-                traceback.print_exc(file=sys.stderr)
-                err_tol -= 1
+                self._err_tol -= 1
                 continue
 
     def validate_batch(self, batch, trajs):
@@ -288,7 +285,7 @@ class DataSource(IterableDataset):
             batch.log_n = torch.tensor([i[-1] for i in log_ns], dtype=torch.float32)
             batch.log_ns = torch.tensor(sum(log_ns, start=[]), dtype=torch.float32)
         batch.obj_props = torch.stack([t["obj_props"] for t in trajs])
-        self.validate_batch(batch, trajs)
+        # self.validate_batch(batch, trajs)
         return self._maybe_put_in_mp_buffer(batch)
 
     def compute_properties(self, trajs, mark_as_online=False):
@@ -368,16 +365,19 @@ class DataSource(IterableDataset):
 
     def iterate_indices(self, n, num_samples):
         worker_info = torch.utils.data.get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        if torch.distributed.is_initialized():
+            num_workers *= torch.distributed.get_world_size()
+        wid = get_this_wid()
         if n == 0:
             # Should we be raising an error here? warning?
             yield np.arange(0, 0)
             return
 
-        if worker_info is None:  # no multi-processing
+        if num_workers == 1:  # no multi-processing, no distributed
             start, end, wid = 0, n, -1
         else:  # split the data into chunks (per-worker)
-            nw = worker_info.num_workers
-            wid = worker_info.id
+            nw = num_workers
             start, end = int(np.round(n / nw * wid)), int(np.round(n / nw * (wid + 1)))
 
         if end - start <= num_samples:

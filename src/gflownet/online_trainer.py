@@ -131,7 +131,7 @@ class StandardOnlineTrainer(GFNTrainer):
         if self.print_config:
             print("\n\nHyperparameters:\n")
             print(yaml_cfg)
-        if self.cfg.log_dir is not None:
+        if self.cfg.log_dir is not None and self.rank == 0:
             with open(pathlib.Path(self.cfg.log_dir) / "config.yaml", "w", encoding="utf8") as f:
                 f.write(yaml_cfg)
 

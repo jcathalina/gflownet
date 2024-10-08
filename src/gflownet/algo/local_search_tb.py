@@ -20,14 +20,15 @@ class LocalSearchTB(TrajectoryBalance):
 
     def create_training_data_from_own_samples(self, model, n, cond_info=None, random_action_prob=0.0):
         assert self.task is not None, "LocalSearchTB requires a task to be set"
-        assert n % (1 + self.global_cfg.algo.ls.num_ls_steps) == 0, "n must be divisible by 1 + num_ls_steps"
         if self.global_cfg.algo.ls.yield_only_accepted:
-            n_per_step = n
+            n_per_step = n // 2
+            assert n % 2 == 0, "n must be divisible by 2"
         else:
+            assert n % (1 + self.global_cfg.algo.ls.num_ls_steps) == 0, "n must be divisible by 1 + num_ls_steps"
             n_per_step = n // (1 + self.global_cfg.algo.ls.num_ls_steps)
         cond_info = {k: v[:n_per_step] for k, v in cond_info.items()} if cond_info is not None else None
         random_action_prob = random_action_prob or 0.0
-        data = self.graph_sampler.local_search_sample_from_model(
+        data, accept_rate = self.graph_sampler.local_search_sample_from_model(
             model,
             n_per_step,
             cond_info,
@@ -35,6 +36,8 @@ class LocalSearchTB(TrajectoryBalance):
             self.global_cfg.algo.ls,
             self._compute_log_rewards,
         )
+        for t in data:
+            t['accept_rate'] = accept_rate
         return data
 
     def _compute_log_rewards(self, trajs, cond_info):

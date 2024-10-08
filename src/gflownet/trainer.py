@@ -201,7 +201,7 @@ class GFNTrainer:
             # TODO: might be better to change total steps to total trajectories drawn
             src.do_sample_model_n_times(model, n_drawn, num_total=self.cfg.num_validation_gen_steps * n_drawn)
 
-        if self.cfg.log_dir:
+        if self.cfg.log_dir and n_drawn > 0:
             src.add_sampling_hook(SQLiteLogHook(str(pathlib.Path(self.cfg.log_dir) / "valid"), self.ctx))
         for hook in self.valid_sampling_hooks:
             src.add_sampling_hook(hook)
@@ -251,7 +251,8 @@ class GFNTrainer:
     def evaluate_batch(self, batch: gd.Batch, epoch_idx: int = 0, batch_idx: int = 0) -> Dict[str, Any]:
         tick = time.time()
         self.model.eval()
-        loss, info = self.algo.compute_batch_losses(self.model, batch)
+        with torch.no_grad():
+            loss, info = self.algo.compute_batch_losses(self.model, batch)
         if hasattr(batch, "extra_info"):
             info.update(batch.extra_info)
         info["eval_time"] = time.time() - tick
@@ -272,15 +273,11 @@ class GFNTrainer:
         self.sampling_model.to(self.device)
         if self.world_size > 1:
             self.model = DistributedDataParallel(
-                self.model.to(self.rank), 
-                device_ids=[self.rank], 
-                output_device=self.rank
+                self.model.to(self.rank), device_ids=[self.rank], output_device=self.rank
             )
             if self.sampling_model is not self.model:
                 self.sampling_model = DistributedDataParallel(
-                    self.sampling_model.to(self.rank),
-                    device_ids=[self.rank],
-                    output_device=self.rank
+                    self.sampling_model.to(self.rank), device_ids=[self.rank], output_device=self.rank
                 )
 
     def run(self, logger=None):
@@ -292,7 +289,10 @@ class GFNTrainer:
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         import threading
-        self.model.lock = threading.Lock()  # This is created here because you can't pickle a lock, and model is deepcopied -> sampling_model
+
+        self.model.lock = (
+            threading.Lock()
+        )  # This is created here because you can't pickle a lock, and model is deepcopied -> sampling_model
         epoch_length = max(len(self.training_data), 1)
         valid_freq = self.cfg.validate_every
         # If checkpoint_every is not specified, checkpoint at every validation epoch
@@ -327,23 +327,15 @@ class GFNTrainer:
             start_time = time.time()
             if it % self.print_every == 0:
                 logger.info(f"iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
-
-            if self.world_size > 1:
-                all_info_vals = torch.zeros(len(info)).to(self.rank)
-                for i, k in enumerate(sorted(info.keys())):
-                    all_info_vals[i] = info[k]
-                dist.all_reduce(all_info_vals, op=dist.ReduceOp.SUM)
-                for i, k in enumerate(sorted(info.keys())):
-                    info[k] = all_info_vals[i].item() / self.world_size
-            if self.rank == 0:
-                self.log(info, it, 'train')
+            self.log(info, it, "train")
 
             if valid_freq > 0 and it % valid_freq == 0:
+                logger.info("Starting validation epoch")
                 for batch in valid_dl:
                     batch = self._maybe_resolve_shared_buffer(batch, valid_dl)
                     info = self.evaluate_batch(batch.to(self.device), epoch_idx, batch_idx)
-                    self.log(info, it, "valid")
                     logger.info(f"validation - iteration {it} : " + " ".join(f"{k}:{v:.2f}" for k, v in info.items()))
+                    self.log(info, it, "valid")
                 end_metrics = {}
                 for c in callbacks.values():
                     if hasattr(c, "on_validation_end"):
@@ -418,6 +410,17 @@ class GFNTrainer:
         self.model.load_state_dict(state["models_state_dict"][0])
 
     def log(self, info, index, key):
+        # First check if we need to reduce the info across processes
+        if self.world_size > 1:
+            all_info_vals = torch.zeros(len(info)).to(self.rank)
+            for i, k in enumerate(sorted(info.keys())):
+                all_info_vals[i] = info[k]
+            dist.all_reduce(all_info_vals, op=dist.ReduceOp.SUM)
+            for i, k in enumerate(sorted(info.keys())):
+                info[k] = all_info_vals[i].item() / self.world_size
+        if self.rank != 0:  # Only the master process logs
+            return
+
         if not hasattr(self, "_summary_writer"):
             self._summary_writer = torch.utils.tensorboard.SummaryWriter(self.cfg.log_dir)
         for k, v in info.items():

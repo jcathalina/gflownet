@@ -235,6 +235,7 @@ class GraphSampler:
         if self.pad_with_terminal_state:
             for t in current_trajs:
                 t["traj"] = t["traj"][:-1]  # Remove the padding state
+        num_accepts = 0
 
         for mcmc_steps in range(cfg.num_ls_steps):
             # First we must do a bit of accounting so that we can later prevent trajectories longer than max_len
@@ -254,7 +255,7 @@ class GraphSampler:
                 self._backward_step(model, bck_trajs, graphs, cond_info, done, dev, fwd_a)
                 fwd_a = [t["traj"][-1][1] for t in bck_trajs]
             # Add forward logprobs for the last step
-            self._add_fwd_logprobs(bck_trajs, graphs, model, cond_info, done, dev, fwd_a)
+            self._add_fwd_logprobs(bck_trajs, graphs, model, cond_info, [False] * n, dev, fwd_a)
             log_P_B_tau_back = [sum(t["bck_logprobs"]) for t in bck_trajs]
             log_P_F_tau_back = [sum(t["fwd_logprobs"]) for t in bck_trajs]
 
@@ -277,10 +278,10 @@ class GraphSampler:
 
             # We add those new terminal states to the list of terminal states
             terminals = [t["traj"][-1][0] for t in fwd_trajs]
-            import pdb; pdb.set_trace()
             sampled_terminals.extend(terminals)
             for traj, term in zip(fwd_trajs, terminals):
                 traj["result"] = term
+                traj["is_accept"] = False
             # Compute rewards for the acceptance
             if compute_reward is not None:
                 compute_reward(fwd_trajs, cond_info)
@@ -291,6 +292,7 @@ class GraphSampler:
                     # Keep the highest reward
                     if fwd_trajs[i]["log_reward"] > current_trajs[i]["log_reward"]:
                         current_trajs[i] = fwd_trajs[i]
+                        num_accepts += 1
                 elif cfg.accept_criteria == "stochastic":
                     # Accept with probability max(1, R(x')/R(x)q(x'|x)/q(x|x'))
                     log_q_xprime_given_x = log_P_B_tau_back[i] + log_P_F_tau_recon[i]
@@ -299,8 +301,10 @@ class GraphSampler:
                     log_acceptance_ratio = log_R_ratio + log_q_xprime_given_x - log_q_x_given_xprime
                     if log_acceptance_ratio > 0 or rng.uniform() < torch.exp(log_acceptance_ratio):
                         current_trajs[i] = fwd_trajs[i]
+                        num_accepts += 1
                 elif cfg.accept_criteria == "always":
                     current_trajs[i] = fwd_trajs[i]
+                    num_accepts += 1
 
         # Finally, we resample new "P_B-on-policy" trajectories from the terminal states
         # If we're only interested in the accepted trajectories, we use them as starting points instead
@@ -316,7 +320,8 @@ class GraphSampler:
                 else None
             )
         returned_trajs = self.sample_backward_from_graphs(sampled_terminals, model, stacked_ci, random_action_prob)
-        return returned_trajs + initial_trajs
+        # TODO: modify the trajs' cond_info!!!
+        return initial_trajs + returned_trajs, num_accepts / (cfg.num_ls_steps * n)
 
     def _forward_step(self, model, data, graphs, cond_info, t, done, rng, dev, random_action_prob, bck_a=[]) -> None:
         def not_done(lst):
