@@ -1,3 +1,4 @@
+import traceback
 import warnings
 from typing import Callable, Generator, List, Optional
 
@@ -92,18 +93,8 @@ class DataSource(IterableDataset):
                     raise e
                 print(f"Error in DataSource: {e} [tol={self._err_tol}]")
                 # print full traceback
-                import sys
-                import traceback
 
                 traceback.print_exc()
-                continue
-            except:
-                print("Unknown error in DataSource")
-                import sys
-                import traceback
-
-                traceback.print_exc()
-                self._err_tol -= 1
                 continue
 
     def validate_batch(self, batch, trajs):

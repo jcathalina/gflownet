@@ -1,9 +1,6 @@
-import torch
-
 from gflownet import GFNTask
 from gflownet.algo.trajectory_balance import TrajectoryBalance
 from gflownet.data.data_source import DataSource
-from gflownet.utils.misc import get_worker_device
 
 
 class LocalSearchTB(TrajectoryBalance):

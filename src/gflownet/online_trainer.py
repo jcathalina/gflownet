@@ -1,6 +1,6 @@
 import copy
-import os
 import pathlib
+from typing import Any
 
 import git
 import torch
@@ -137,7 +137,7 @@ class StandardOnlineTrainer(GFNTrainer):
 
     def step(self, loss: Tensor, train_it: int):
         loss.backward()
-        info = {}
+        info: dict[str, Any] = {}
         if train_it % self.cfg.algo.grad_acc_steps != 0:
             return info
         if self.cfg.opt.clip_grad_type is not None:

@@ -620,10 +620,6 @@ class TrajectoryBalance(GFNAlgorithm):
         if self.cfg.mle_loss_multiplier != 0:
             info["mle_loss"] = mle_loss.item()
 
-        if not torch.isfinite(loss):
-            import pdb
-
-            pdb.set_trace()
         return loss, info
 
     def analytical_maxent_backward(self, batch, first_graph_idx):

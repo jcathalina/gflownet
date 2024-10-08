@@ -268,8 +268,8 @@ class MPObjectProxy:
                     break
                 timeouts = 0
                 attr, args, kwargs = r
-                if hasattr(self.obj, "lock"):
-                    f.lock.acquire()
+                if hasattr(self.obj, "lock"):  # TODO: this is not used anywhere?
+                    self.obj.lock.acquire()
                 f = getattr(self.obj, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
                 kwargs = {k: i.to(self.device) if isinstance(i, self.cuda_types) else i for k, i in kwargs.items()}
@@ -293,7 +293,7 @@ class MPObjectProxy:
                     msg = self.to_cpu(result)
                 self.out_queues[qi].put(self.encode(msg))
                 if hasattr(self.obj, "lock"):
-                    f.lock.release()
+                    self.obj.lock.release()
 
     def terminate(self):
         self.stop.set()

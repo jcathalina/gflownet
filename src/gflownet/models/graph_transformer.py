@@ -310,7 +310,7 @@ class GraphTransformerGFN(nn.Module):
         sc = self.logit_scaler(
             g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device)
         )
-        cat.logits = [l * sc[b] for l, b in zip(cat.raw_logits, cat.batch)]  # Setting .logits masks them
+        cat.logits = [lg * sc[b] for lg, b in zip(cat.raw_logits, cat.batch)]  # Setting .logits masks them
         return cat
 
     def forward(self, g: gd.Batch):

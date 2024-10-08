@@ -136,16 +136,17 @@ class GraphSampler:
             # If we're not bootstrapping, we could query the reward
             # model here, but this is expensive/impractical.  Instead
             # just report forward and backward logprobs
+            # TODO: stop using dicts and used typed objects
             data[i]["fwd_logprobs"] = torch.stack(data[i]["fwd_logprobs"]).reshape(-1)
             data[i]["U_bck_logprobs"] = torch.stack(data[i]["U_bck_logprobs"]).reshape(-1)
-            data[i]["fwd_logprob"] = data[i]["fwd_logprobs"].sum()
-            data[i]["U_bck_logprob"] = data[i]["U_bck_logprobs"].sum()
+            data[i]["fwd_logprob"] = data[i]["fwd_logprobs"].sum()  # type: ignore
+            data[i]["U_bck_logprob"] = data[i]["U_bck_logprobs"].sum()  # type: ignore
             data[i]["result"] = graphs[i]
             if self.pad_with_terminal_state:
-                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Pad)))
+                data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.Pad)))  # type: ignore
                 data[i]["U_bck_logprobs"] = torch.cat([data[i]["U_bck_logprobs"], torch.tensor([0.0], device=dev)])
-                data[i]["is_sink"].append(1)
-                assert len(data[i]["U_bck_logprobs"]) == len(data[i]["bck_a"])
+                data[i]["is_sink"].append(1)  # type: ignore
+                assert len(data[i]["U_bck_logprobs"]) == len(data[i]["bck_a"])  # type: ignore
         return data
 
     def sample_backward_from_graphs(
@@ -198,16 +199,19 @@ class GraphSampler:
 
         for i in range(n):
             # See comments in sample_from_model
-            data[i]["traj"] = data[i]["traj"][::-1]
+            # TODO: stop using dicts and used typed objects
+            data[i]["traj"] = data[i]["traj"][::-1]  # type: ignore
             # I think this pad is only necessary if we're padding terminal states???
-            data[i]["bck_a"] = [GraphAction(GraphActionType.Pad)] + data[i]["bck_a"][::-1]
-            data[i]["is_sink"] = data[i]["is_sink"][::-1]
-            data[i]["U_bck_logprobs"] = torch.tensor([0] + data[i]["U_bck_logprobs"][::-1], device=dev).reshape(-1)
+            data[i]["bck_a"] = [GraphAction(GraphActionType.Pad)] + data[i]["bck_a"][::-1]  # type: ignore
+            data[i]["is_sink"] = data[i]["is_sink"][::-1]  # type: ignore
+            data[i]["U_bck_logprobs"] = torch.tensor(
+                [0] + data[i]["U_bck_logprobs"][::-1], device=dev  # type: ignore
+            ).reshape(-1)
             if self.pad_with_terminal_state:
-                data[i]["traj"].append((starting_graphs[i], GraphAction(GraphActionType.Pad)))
+                data[i]["traj"].append((starting_graphs[i], GraphAction(GraphActionType.Pad)))  # type: ignore
                 data[i]["U_bck_logprobs"] = torch.cat([data[i]["U_bck_logprobs"], torch.tensor([0.0], device=dev)])
-                data[i]["is_sink"].append(1)
-                assert len(data[i]["U_bck_logprobs"]) == len(data[i]["bck_a"])
+                data[i]["is_sink"].append(1)  # type: ignore
+                assert len(data[i]["U_bck_logprobs"]) == len(data[i]["bck_a"])  # type: ignore
         return data
 
     def local_search_sample_from_model(
@@ -249,7 +253,7 @@ class GraphSampler:
             ]  # type: ignore
             graphs = [i["traj"][-1][0] for i in current_trajs]
             done = [False] * n
-            fwd_a = []
+            fwd_a: List[GraphAction] = []
             for i in range(cfg.num_bck_steps):
                 # This modifies `bck_trajs` & `graphs` in place, passing fwd_a computes P_F(s|s') for the previous step
                 self._backward_step(model, bck_trajs, graphs, cond_info, done, dev, fwd_a)
@@ -264,7 +268,7 @@ class GraphSampler:
                 {"traj": [], "bck_a": [], "is_sink": [], "bck_logprobs": [], "fwd_logprobs": []} for _ in current_trajs
             ]  # type: ignore
             done = [False] * n
-            bck_a = []
+            bck_a: List[GraphAction] = []
             while not all(done):
                 self._forward_step(model, fwd_trajs, graphs, cond_info, 0, done, rng, dev, random_action_prob, bck_a)
                 done = [d or (len(t["traj"]) + T) >= self.max_len for d, t, T in zip(done, fwd_trajs, trunc_lens)]
@@ -281,7 +285,7 @@ class GraphSampler:
             sampled_terminals.extend(terminals)
             for traj, term in zip(fwd_trajs, terminals):
                 traj["result"] = term
-                traj["is_accept"] = False
+                traj["is_accept"] = False  # type: ignore
             # Compute rewards for the acceptance
             if compute_reward is not None:
                 compute_reward(fwd_trajs, cond_info)

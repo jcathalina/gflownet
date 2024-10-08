@@ -1,6 +1,6 @@
 import heapq
 from threading import Lock
-from typing import List
+from typing import Any, List
 
 import numpy as np
 import torch
@@ -15,8 +15,8 @@ class ReplayBuffer(object):
         Replay buffer for storing and sampling arbitrary data (e.g. transitions or trajectories)
         In self.push(), the buffer detaches any torch tensor and sends it to the CPU.
         """
-        self.capacity = cfg.replay.capacity
-        self.warmup = cfg.replay.warmup
+        self.capacity = cfg.replay.capacity or int(1e6)
+        self.warmup = cfg.replay.warmup or 0
         assert self.warmup <= self.capacity, "ReplayBuffer warmup must be smaller than capacity"
 
         self.buffer: List[tuple] = []
@@ -24,7 +24,7 @@ class ReplayBuffer(object):
 
         self.treat_as_heap = cfg.replay.keep_highest_rewards
         self.filter_uniques = cfg.replay.keep_only_uniques
-        self._uniques = set()
+        self._uniques: set[Any] = set()
 
         self._lock = Lock()
 
@@ -56,7 +56,7 @@ class ReplayBuffer(object):
                     self._uniques.add(unique_obj)
         else:
             if len(self.buffer) < self.capacity:
-                self.buffer.append(None)
+                self.buffer.append(())
             if self.filter_uniques:
                 if self.position == 0 and len(self.buffer) == self.capacity:
                     # We're about to wrap around, so remove the oldest element

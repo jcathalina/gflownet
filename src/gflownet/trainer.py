@@ -272,11 +272,11 @@ class GFNTrainer:
         self.model.to(self.device)
         self.sampling_model.to(self.device)
         if self.world_size > 1:
-            self.model = DistributedDataParallel(
+            self.model = nn.parallel.DistributedDataParallel(
                 self.model.to(self.rank), device_ids=[self.rank], output_device=self.rank
             )
             if self.sampling_model is not self.model:
-                self.sampling_model = DistributedDataParallel(
+                self.sampling_model = nn.parallel.DistributedDataParallel(
                     self.sampling_model.to(self.rank), device_ids=[self.rank], output_device=self.rank
                 )
 
