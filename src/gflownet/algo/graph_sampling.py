@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from gflownet.algo.config import LSTBConfig
 from gflownet.envs.graph_building_env import (
     Graph,
     GraphAction,
@@ -13,7 +14,6 @@ from gflownet.envs.graph_building_env import (
     GraphActionType,
     action_type_to_mask,
 )
-from gflownet.algo.config import LSTBConfig
 from gflownet.models.graph_transformer import GraphTransformerGFN
 from gflownet.utils.misc import get_worker_device, get_worker_rng
 
@@ -309,7 +309,7 @@ class GraphSampler:
         # Finally, we resample new "P_B-on-policy" trajectories from the terminal states
         # If we're only interested in the accepted trajectories, we use them as starting points instead
         if cfg.yield_only_accepted:
-            sampled_terminals = [i['traj'][-1][0] for i in current_trajs]
+            sampled_terminals = [i["traj"][-1][0] for i in current_trajs]
             stacked_ci = cond_info
 
         if not cfg.yield_only_accepted:

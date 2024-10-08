@@ -246,19 +246,23 @@ class FragMolBuildingEnvContext(GraphBuildingEnvContext):
             if a >= 0:
                 attached[e[0]].append(a)
                 if self.use_strict_edge_filling:
-                    # Since the agent has to fill in the attachment points before adding a new node, or stopping, the 
-                    # reverse is that if there is a half-filled edge attachment, the only valid move is to unset the 
+                    # Since the agent has to fill in the attachment points before adding a new node, or stopping, the
+                    # reverse is that if there is a half-filled edge attachment, the only valid move is to unset the
                     # other half (i.e. whichever is the first edge we find like that)
                     # We also will only end up being able to do that to leaf nodes (degree 1)
                     if degrees[e[0]] == 1 or degrees[e[1]] == 1:
-                        remove_edge_attr_mask[i, 0] = 1 if not has_unfilled_attach or has_unfilled_attach and first_unfilled_attach else 0
+                        remove_edge_attr_mask[i, 0] = (
+                            1 if not has_unfilled_attach or has_unfilled_attach and first_unfilled_attach else 0
+                        )
                 else:
                     remove_edge_attr_mask[i, 0] = 1
             if b >= 0:
                 attached[e[1]].append(b)
                 if self.use_strict_edge_filling:
                     if degrees[e[0]] == 1 or degrees[e[1]] == 1:
-                        remove_edge_attr_mask[i, 1] = 1 if not has_unfilled_attach or has_unfilled_attach and first_unfilled_attach else 0
+                        remove_edge_attr_mask[i, 1] = (
+                            1 if not has_unfilled_attach or has_unfilled_attach and first_unfilled_attach else 0
+                        )
                 else:
                     remove_edge_attr_mask[i, 1] = 1
 

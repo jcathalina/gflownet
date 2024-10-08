@@ -632,9 +632,9 @@ PyObject *Graph_getstate(PyObject *_self, PyObject *args) {
     memcpy(ptr + 4, self->nodes, self->num_nodes * sizeof(int));
     memcpy(ptr + 4 + self->num_nodes, self->edges, self->num_edges * 2 * sizeof(int));
     memcpy(ptr + 4 + self->num_nodes + self->num_edges * 2, self->node_attrs, self->num_node_attrs * 3 * sizeof(int));
-    memcpy(ptr + 4 + self->num_nodes + self->num_edges * 2 + self->num_node_attrs * 3, 
+    memcpy(ptr + 4 + self->num_nodes + self->num_edges * 2 + self->num_node_attrs * 3,
            self->edge_attrs, self->num_edge_attrs * 3 * sizeof(int));
-    memcpy(ptr + 4 + self->num_nodes + self->num_edges * 2 + self->num_node_attrs * 3 + self->num_edge_attrs * 3, 
+    memcpy(ptr + 4 + self->num_nodes + self->num_edges * 2 + self->num_node_attrs * 3 + self->num_edge_attrs * 3,
            self->degrees, self->num_nodes * sizeof(int));
     // Return (bytes, GraphDef)
     PyObject *res = PyTuple_Pack(2, state, self->graph_def);
@@ -670,7 +670,7 @@ PyObject *Graph_setstate(PyObject *_self, PyObject *args) {
     memcpy(self->nodes, ptr + 4, self->num_nodes * sizeof(int));
     memcpy(self->edges, ptr + 4 + self->num_nodes, self->num_edges * 2 * sizeof(int));
     memcpy(self->node_attrs, ptr + 4 + self->num_nodes + self->num_edges * 2, self->num_node_attrs * 3 * sizeof(int));
-    memcpy(self->edge_attrs, ptr + 4 + self->num_nodes + self->num_edges * 2 + self->num_node_attrs * 3, 
+    memcpy(self->edge_attrs, ptr + 4 + self->num_nodes + self->num_edges * 2 + self->num_node_attrs * 3,
            self->num_edge_attrs * 3 * sizeof(int));
     memcpy(self->degrees, ptr + 4 + self->num_nodes + self->num_edges * 2 + self->num_node_attrs * 3 + self->num_edge_attrs * 3,
            self->num_nodes * sizeof(int));
@@ -699,7 +699,7 @@ def search(graph, subgraph, assignments, depth):
         if u < depth and v < depth:
             x, y = assignments[u], assignments[v]
             if not (
-                graph.has_edge(x, y) and 
+                graph.has_edge(x, y) and
                 graph.nodes[x] == subgraph.nodes[u] and graph.nodes[y] == subgraph.nodes[v] and
                 graph.edges[x, y] == subgraph.edges[u, v]):
                 return False

@@ -148,6 +148,7 @@ class SQLConfig(StrictDataClass):
     gamma: float = 1
     penalty: float = -10
 
+
 @dataclass
 class LSTBConfig(StrictDataClass):
     num_ls_steps: int = 1

@@ -81,6 +81,7 @@ class GFNAlgorithm:
     def set_task(self, task):
         raise NotImplementedError()
 
+
 class GFNTask:
     def cond_info_to_logreward(self, cond_info: Dict[str, Tensor], obj_props: ObjectProperties) -> LogScalar:
         """Combines a minibatch of reward signal vectors and conditional information into a scalar reward.

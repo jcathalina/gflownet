@@ -9,7 +9,8 @@ import torch
 import torch.multiprocessing as mp
 
 DO_PIN_BUFFERS = False  # So actually, we don't really need to pin buffers, but it's a good idea in some cases.
-                        # The shared memory is already a good step.
+# The shared memory is already a good step.
+
 
 class SharedPinnedBuffer:
     def __init__(self, size):
@@ -267,7 +268,7 @@ class MPObjectProxy:
                     break
                 timeouts = 0
                 attr, args, kwargs = r
-                if hasattr(self.obj, 'lock'):
+                if hasattr(self.obj, "lock"):
                     f.lock.acquire()
                 f = getattr(self.obj, attr)
                 args = [i.to(self.device) if isinstance(i, self.cuda_types) else i for i in args]
@@ -291,7 +292,7 @@ class MPObjectProxy:
                 else:
                     msg = self.to_cpu(result)
                 self.out_queues[qi].put(self.encode(msg))
-                if hasattr(self.obj, 'lock'):
+                if hasattr(self.obj, "lock"):
                     f.lock.release()
 
     def terminate(self):

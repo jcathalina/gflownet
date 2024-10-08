@@ -39,14 +39,14 @@ class GTGENLayer(nn.Module):
         if self.ln_type == "post":
             agg = self.gen(x, edge_index, edge_attr)
             l_h = self.linear(self.conv(torch.cat([x, agg], 1), edge_index, edge_attr))
-            scale, shift =  cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
+            scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
             x = self.norm1(x + l_h * scale + shift, batch)
             x = self.norm2(x + self.ff(x), batch)
         else:
             x_norm = self.norm1(x, batch)
             agg = self.gen(x_norm, edge_index, edge_attr)
             l_h = self.linear(self.conv(torch.cat([x, agg], 1), edge_index, edge_attr))
-            scale, shift =  cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
+            scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
             x = x + l_h * scale + shift
             x = x + self.ff(self.norm2(x, batch))
         return x
@@ -55,23 +55,24 @@ class GTGENLayer(nn.Module):
 class GPSLayer(nn.Module):
     def __init__(self, num_emb, num_heads, num_mlp_layers, residual=False):
         super().__init__()
-        self.conv = gnn.GPSConv(num_emb, 
-                        gnn.GINEConv(mlp(num_emb, num_emb, num_emb, num_mlp_layers), edge_dim=num_emb),
-                        num_heads,
-                        norm='layer_norm')
+        self.conv = gnn.GPSConv(
+            num_emb,
+            gnn.GINEConv(mlp(num_emb, num_emb, num_emb, num_mlp_layers), edge_dim=num_emb),
+            num_heads,
+            norm="layer_norm",
+        )
         self.cscale = nn.Linear(num_emb, num_emb * 2)
         self.residual = residual
-    
+
     def forward(self, x, edge_index, edge_attr, batch, c):
         cs = self.cscale(c)
         l_h = self.conv(x, edge_index, batch, edge_attr=edge_attr)
-        scale, shift =  cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
+        scale, shift = cs[:, : l_h.shape[1]], cs[:, l_h.shape[1] :]
         if self.residual:
             x = x + l_h * scale + shift
         else:
             x = l_h * scale + shift
         return x
-
 
 
 class GraphTransformer(nn.Module):
@@ -88,8 +89,18 @@ class GraphTransformer(nn.Module):
     """
 
     def __init__(
-        self, x_dim, e_dim, g_dim, num_emb=64, num_layers=3, num_heads=2, num_noise=0, ln_type="pre", concat=True,
-        num_mlp_layers=1, conv_type='Transformer',
+        self,
+        x_dim,
+        e_dim,
+        g_dim,
+        num_emb=64,
+        num_layers=3,
+        num_heads=2,
+        num_noise=0,
+        ln_type="pre",
+        concat=True,
+        num_mlp_layers=1,
+        conv_type="Transformer",
     ):
         """
         Parameters
@@ -126,14 +137,12 @@ class GraphTransformer(nn.Module):
         self.x2h = mlp(x_dim + num_noise, num_emb, num_emb, 2)
         self.e2h = mlp(e_dim, num_emb, num_emb, 2)
         self.c2h = mlp(max(1, g_dim), num_emb, num_emb, 2)
-        if conv_type == 'Transformer':
-            self.gnn = nn.ModuleList([
-                GTGENLayer(num_emb, num_heads, concat, num_mlp_layers, ln_type) for _ in range(num_layers)
-            ])
-        elif conv_type == 'GPS':
-            self.gnn = nn.ModuleList([
-                GPSLayer(num_emb, num_heads, num_mlp_layers) for _ in range(num_layers)
-            ])
+        if conv_type == "Transformer":
+            self.gnn = nn.ModuleList(
+                [GTGENLayer(num_emb, num_heads, concat, num_mlp_layers, ln_type) for _ in range(num_layers)]
+            )
+        elif conv_type == "GPS":
+            self.gnn = nn.ModuleList([GPSLayer(num_emb, num_heads, num_mlp_layers) for _ in range(num_layers)])
 
     def forward(self, g: gd.Batch):
         """Forward pass
@@ -159,7 +168,7 @@ class GraphTransformer(nn.Module):
         e = self.e2h(g.edge_attr)
         c = self.c2h(g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
         num_total_nodes = g.x.shape[0]
-        if self.conv_type == 'Transformer':
+        if self.conv_type == "Transformer":
             # Augment the edges with a new edge to the conditioning
             # information node. This new node is connected to every node
             # within its graph.
@@ -181,7 +190,7 @@ class GraphTransformer(nn.Module):
         for i in range(self.num_layers):
             o = self.gnn[i](o, aug_edge_index, aug_e, aug_batch, c[aug_batch])
 
-        if self.conv_type == 'Transformer':
+        if self.conv_type == "Transformer":
             # Remove the conditioning information node embedding
             o_final = o[: -c.shape[0]]
             glob = torch.cat([gnn.global_mean_pool(o_final, g.batch), o[-c.shape[0] :]], 1)
@@ -246,7 +255,7 @@ class GraphTransformerGFN(nn.Module):
         self.env_ctx = env_ctx
         num_emb = cfg.model.num_emb
         num_final = num_emb
-        num_glob_final = num_emb * 2 if cfg.model.graph_transformer.conv_type == 'Transformer' else num_emb
+        num_glob_final = num_emb * 2 if cfg.model.graph_transformer.conv_type == "Transformer" else num_emb
         num_edge_feat = num_emb if env_ctx.edges_are_unordered else num_emb * 2
         self.edges_are_duplicated = env_ctx.edges_are_duplicated
         self.edges_are_unordered = env_ctx.edges_are_unordered
@@ -298,7 +307,9 @@ class GraphTransformerGFN(nn.Module):
             action_masks=[action_type_to_mask(t, g) for t in action_types],
             types=action_types,
         )
-        sc = self.logit_scaler(g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device))
+        sc = self.logit_scaler(
+            g.cond_info if g.cond_info is not None else torch.ones((g.num_graphs, 1), device=g.x.device)
+        )
         cat.logits = [l * sc[b] for l, b in zip(cat.raw_logits, cat.batch)]  # Setting .logits masks them
         return cat
 

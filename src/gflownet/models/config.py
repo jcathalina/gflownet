@@ -10,7 +10,7 @@ class GraphTransformerConfig(StrictDataClass):
     ln_type: str = "pre"
     num_mlp_layers: int = 1
     concat_heads: bool = True
-    conv_type: str = 'Transformer'
+    conv_type: str = "Transformer"
 
 
 class SeqPosEnc(int, Enum):

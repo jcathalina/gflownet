@@ -34,12 +34,14 @@ _worker_rngs = {}
 _worker_rng_seed = [142857]
 _main_process_device = [torch.device("cpu")]
 
+
 def get_this_wid():
     worker_info = torch.utils.data.get_worker_info()
     wid = worker_info.id if worker_info is not None else 0
     if torch.distributed.is_initialized():
         wid = torch.distributed.get_rank() * (worker_info.num_workers if worker_info is not None else 1) + wid
     return wid
+
 
 def get_worker_rng():
     wid = get_this_wid()

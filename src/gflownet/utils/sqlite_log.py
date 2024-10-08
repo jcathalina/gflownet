@@ -8,6 +8,7 @@ import torch.utils.data
 
 from gflownet.utils.misc import get_this_wid
 
+
 class SQLiteLogHook:
     def __init__(self, log_dir, ctx) -> None:
         self.log = None  # Only initialized in __call__, which will occur inside the worker

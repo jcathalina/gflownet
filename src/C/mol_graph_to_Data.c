@@ -133,10 +133,10 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
                 max_valence[i] -= 1;
             }
         }
-            
+
         /* TODO: Figure out this charge thing...
         wait or is the problem that I'm _removing_ valence for a + charged mol??
-        else if (charge_val[i] == 1) { 
+        else if (charge_val[i] == 1) {
             // well... maybe this is true of the general case?
             // if an atom is positively charged then we can just bond it to more stuff?
             // why 2 for N?
@@ -145,8 +145,8 @@ PyObject *mol_graph_to_Data(PyObject *self, PyObject *args) {
        // Determine hypervalent atoms
        // Hypervalent atoms are atoms that have more than the maximum valence for their atom type because of a positive
        // charge, but don't have this extra charge filled with bonds, or don't have no_impl set to 1
-    /*printf("%d used_valences: %f, max_valence: %d, charge_val: %d, noImpl_val: %d, atom_valences: %d -> %d\n", i, 
-            used_valences[i], max_valence[i], charge_val[i], noImpl_val[i], atom_valences[v_val[i]], 
+    /*printf("%d used_valences: %f, max_valence: %d, charge_val: %d, noImpl_val: %d, atom_valences: %d -> %d\n", i,
+            used_valences[i], max_valence[i], charge_val[i], noImpl_val[i], atom_valences[v_val[i]],
             (used_valences[i] >= atom_valences[v_val[i]] && charge_val[i] == 1 &&
             !(used_valences[i] == max_valence[i] || noImpl_val[i] == 1)));
         fflush(stdout);*/

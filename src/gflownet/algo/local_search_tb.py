@@ -37,7 +37,7 @@ class LocalSearchTB(TrajectoryBalance):
             self._compute_log_rewards,
         )
         for t in data:
-            t['accept_rate'] = accept_rate
+            t["accept_rate"] = accept_rate
         return data
 
     def _compute_log_rewards(self, trajs, cond_info):

@@ -24,6 +24,7 @@ def _get_next_version():
         latest_patch = -1
     return f"{major}.{minor}.{latest_patch+1}"
 
+
 ext = [
     Extension(
         name="gflownet._C",

@@ -9,10 +9,10 @@ from torch_geometric.data import Batch
 from gflownet import GFNAlgorithm, GFNTask
 from gflownet.config import Config
 from gflownet.data.replay_buffer import ReplayBuffer, detach_and_cpu
-from gflownet.envs.graph_building_env import GraphBuildingEnvContext, GraphActionCategorical, action_type_to_mask
+from gflownet.envs.graph_building_env import GraphActionCategorical, GraphBuildingEnvContext, action_type_to_mask
 from gflownet.envs.seq_building_env import SeqBatch
 from gflownet.models.graph_transformer import GraphTransformerGFN
-from gflownet.utils.misc import get_worker_rng, get_this_wid
+from gflownet.utils.misc import get_this_wid, get_worker_rng
 from gflownet.utils.multiprocessing_proxy import BufferPickler, SharedPinnedBuffer
 
 
@@ -85,19 +85,23 @@ class DataSource(IterableDataset):
                 for d in batch_infos:
                     batch_info.update(d)
                 yield self.create_batch(trajs, batch_info)
-                self._err_tol = 10 # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
+                self._err_tol = 10  # Reset the error tolerance, if we run into 10 consecutive errors, we'll break
             except (Exception, RuntimeError) as e:
                 self._err_tol -= 1
                 if self._err_tol == 0:
                     raise e
                 print(f"Error in DataSource: {e} [tol={self._err_tol}]")
                 # print full traceback
-                import traceback, sys
+                import sys
+                import traceback
+
                 traceback.print_exc()
                 continue
             except:
                 print("Unknown error in DataSource")
-                import traceback, sys
+                import sys
+                import traceback
+
                 traceback.print_exc()
                 self._err_tol -= 1
                 continue
@@ -140,7 +144,7 @@ class DataSource(IterableDataset):
                 p = self.algo.get_random_action_prob(t)
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 trajs = self.algo.create_training_data_from_own_samples(model, num_samples, cond_info, p)
-                self.mark_all(trajs, source='sample')
+                self.mark_all(trajs, source="sample")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -170,7 +174,7 @@ class DataSource(IterableDataset):
                 cond_info = self.task.sample_conditional_information(n_this_time, t)
                 # TODO: in the cond info refactor, pass the whole thing instead of just the encoding
                 trajs = self.algo.create_training_data_from_own_samples(model, n_this_time, cond_info, p)
-                self.mark_all(trajs, source='sample')
+                self.mark_all(trajs, source="sample")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -186,7 +190,7 @@ class DataSource(IterableDataset):
         def iterator():
             while self.active:
                 trajs, *_ = self.replay_buffer.sample(num_samples)
-                self.mark_all(trajs, source='replay')
+                self.mark_all(trajs, source="replay")
                 self.relabel_in_hindsight(trajs)  # This is a no-op if the hindsight ratio is 0
                 yield trajs, {}
 
@@ -201,7 +205,7 @@ class DataSource(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
                 trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info, p)
-                self.mark_all(trajs, source='dataset')
+                self.mark_all(trajs, source="dataset")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
                 self.compute_log_rewards(trajs)
@@ -220,7 +224,7 @@ class DataSource(IterableDataset):
                 # it and the state of the program (e.g. validation mode)
                 cond_info = self.task.encode_conditional_information(torch.stack([data[i] for i in idcs]))
                 trajs = self.algo.create_training_data_from_own_samples(model, len(idcs), cond_info, p)
-                self.mark_all(trajs, source='dataset')
+                self.mark_all(trajs, source="dataset")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.compute_properties(trajs, mark_as_online=True)
                 self.compute_log_rewards(trajs)
@@ -243,7 +247,7 @@ class DataSource(IterableDataset):
                 cond_info = self.task.sample_conditional_information(num_samples, t)
                 objs, props = map(list, zip(*[data[i] for i in idcs])) if len(idcs) else ([], [])
                 trajs = self.algo.create_training_data_from_graphs(objs, backwards_model, cond_info, p)
-                self.mark_all(trajs, source='dataset')
+                self.mark_all(trajs, source="dataset")
                 self.set_traj_cond_info(trajs, cond_info)  # Attach the cond info to the trajs
                 self.set_traj_props(trajs, props)
                 self.compute_log_rewards(trajs)
@@ -290,7 +294,7 @@ class DataSource(IterableDataset):
 
     def compute_properties(self, trajs, mark_as_online=False):
         """Sets trajs' obj_props and is_valid keys by querying the task."""
-        if all('obj_props' in t for t in trajs):
+        if all("obj_props" in t for t in trajs):
             return
         # TODO: refactor obj_props into properties
         valid_idcs = torch.tensor([i for i in range(len(trajs)) if trajs[i].get("is_valid", True)]).long()
@@ -314,7 +318,7 @@ class DataSource(IterableDataset):
 
     def compute_log_rewards(self, trajs):
         """Sets trajs' log_reward key by querying the task."""
-        if all('log_reward' in t for t in trajs):
+        if all("log_reward" in t for t in trajs):
             return
         obj_props = torch.stack([t["obj_props"] for t in trajs])
         cond_info = {k: torch.stack([t["cond_info"][k] for t in trajs]) for k in trajs[0]["cond_info"]}
@@ -326,19 +330,25 @@ class DataSource(IterableDataset):
     def send_to_replay(self, trajs):
         if self.replay_buffer is not None:
             for t in trajs:
-                self.replay_buffer.push(t, t["log_reward"], t["obj_props"], t["cond_info"], t["is_valid"],
-                                        unique_obj=self.ctx.get_unique_obj(t["result"]),
-                                        priority=t.get("priority", t['log_reward'].item()))
+                self.replay_buffer.push(
+                    t,
+                    t["log_reward"],
+                    t["obj_props"],
+                    t["cond_info"],
+                    t["is_valid"],
+                    unique_obj=self.ctx.get_unique_obj(t["result"]),
+                    priority=t.get("priority", t["log_reward"].item()),
+                )
 
     def set_traj_cond_info(self, trajs, cond_info):
         for i in range(len(trajs)):
-            if 'cond_info' in trajs[i]:
+            if "cond_info" in trajs[i]:
                 continue
             trajs[i]["cond_info"] = {k: cond_info[k][i] for k in cond_info}
 
     def set_traj_props(self, trajs, props):
         for i in range(len(trajs)):
-            if 'obj_props' in trajs[i]:
+            if "obj_props" in trajs[i]:
                 continue
             trajs[i]["obj_props"] = props[i]  # TODO: refactor
 

@@ -14,13 +14,17 @@ from gflownet.utils.graphs import random_walk_probs
 DEFAULT_CHIRAL_TYPES = [ChiralType.CHI_UNSPECIFIED, ChiralType.CHI_TETRAHEDRAL_CW, ChiralType.CHI_TETRAHEDRAL_CCW]
 
 try:
-    from gflownet._C import mol_graph_to_Data, Graph as C_Graph, GraphDef, Data_collate
+    from gflownet._C import Data_collate
+    from gflownet._C import Graph as C_Graph
+    from gflownet._C import GraphDef, mol_graph_to_Data
 
     C_Graph_available = True
 except ImportError:
     import warnings
+
     warnings.warn("Could not import mol_graph_to_Data, Graph, GraphDef from _C, using pure python implementation")
     C_Graph_available = False
+
 
 class MolBuildingEnvContext(GraphBuildingEnvContext):
     """A specification of what is being generated for a GraphBuildingEnv
@@ -168,7 +172,7 @@ class MolBuildingEnvContext(GraphBuildingEnvContext):
         if C_Graph_available:
             self.graph_def = GraphDef(self.atom_attr_values, self.bond_attr_values)
             self.graph_cls = self._make_C_graph
-            assert charges == [0, 1, -1], 'C impl quirk: charges must be [0, 1, -1]'
+            assert charges == [0, 1, -1], "C impl quirk: charges must be [0, 1, -1]"
         else:
             self.graph_cls = Graph
 

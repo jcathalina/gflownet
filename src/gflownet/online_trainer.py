@@ -39,7 +39,7 @@ class StandardOnlineTrainer(GFNTrainer):
         algo = self.cfg.algo.method
         if algo == "TB":
             algo = TrajectoryBalance
-        elif algo == 'LSTB':
+        elif algo == "LSTB":
             algo = LocalSearchTB
         elif algo == "FM":
             algo = FlowMatching
